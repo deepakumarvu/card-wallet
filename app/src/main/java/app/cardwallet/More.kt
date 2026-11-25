@@ -212,8 +212,17 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                     Text("Reads statement PDFs and card alert emails from your Gmail, read-only. Mail goes straight from Gmail to this phone; nothing is sent anywhere else.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (gmail.isNotBlank()) Text("Connected: $gmail", style = MaterialTheme.typography.bodySmall)
-                    Button(enabled = !syncing, onClick = { connectAndSync() }) {
-                        Text(when { syncing -> "Syncing…"; gmail.isBlank() -> "Connect Gmail"; else -> "Sync now" })
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(enabled = !syncing, onClick = { connectAndSync() }) {
+                            Text(when { syncing -> "Syncing…"; gmail.isBlank() -> "Connect Gmail"; else -> "Sync now" })
+                        }
+                        // Fetch every statement of the last 6 months again, e.g. after adding a card or old card digits.
+                        // Spends already logged aren't added twice.
+                        if (gmail.isNotBlank()) OutlinedButton(enabled = !syncing, onClick = {
+                            gmailPrefs.edit().remove("seen_statement_emails").remove("synced_up_to").apply()
+                            scope.launch { dao.log("Gmail: re-scanning the last 6 months") }
+                            connectAndSync()
+                        }) { Text("Re-scan 6 months") }
                     }
                     if (syncing && syncStatus.isNotBlank()) Text(syncStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }

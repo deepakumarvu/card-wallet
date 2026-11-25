@@ -66,28 +66,26 @@ class GmailApi(private val token: String) {
 
     private fun decode(data: String): ByteArray = Base64.decode(data, Base64.URL_SAFE)
 
-    /** Statement PDFs since [since]: from [exact] addresses, or from [domains] with a statement-like subject. */
-    fun statements(since: Date, exact: List<String>, domains: List<String>, skip: (String) -> Boolean, progress: (Int, Int) -> Unit = { _, _ -> }): List<MailPdf> {
+    /** Ids of statement emails since [since]: from [exact] addresses, or from [domains] with a statement-like subject. */
+    fun statementIds(since: Date, exact: List<String>, domains: List<String>): List<String> {
         val after = SimpleDateFormat("yyyy/MM/dd", Locale.US).format(since)
         val base = "has:attachment filename:pdf after:$after"
         val ids = LinkedHashSet<String>()
         if (exact.isNotEmpty()) ids += search("from:(${exact.joinToString(" OR ")}) $base")
         if (domains.isNotEmpty()) ids += search("from:(${domains.joinToString(" OR ")}) (${KEYWORDS.joinToString(" OR ") { "subject:$it" }}) $base")
-        val out = mutableListOf<MailPdf>()
-        for ((n, id) in ids.withIndex()) {
-            progress(n + 1, ids.size)
-            val msg = message(id)
-            for (p in parts(msg.getJSONObject("payload"))) {
-                val name = p.optString("filename")
-                val attachment = p.optJSONObject("body")?.optString("attachmentId").orEmpty()
-                if (!name.endsWith(".pdf", true) || attachment.isEmpty()) continue
-                val key = "$id/$name"
-                if (skip(key)) continue
-                val bytes = decode(get("messages/$id/attachments/$attachment").getString("data"))
-                out += MailPdf(key, header(msg, "From"), header(msg, "Subject"), msg.optString("internalDate").toLongOrNull() ?: 0, name, bytes)
-            }
+        return ids.toList()
+    }
+
+    /** The PDF attachments of one email, downloaded. */
+    fun pdfsOf(id: String): List<MailPdf> {
+        val msg = message(id)
+        return parts(msg.getJSONObject("payload")).mapNotNull { p ->
+            val name = p.optString("filename")
+            val attachment = p.optJSONObject("body")?.optString("attachmentId").orEmpty()
+            if (!name.endsWith(".pdf", true) || attachment.isEmpty()) return@mapNotNull null
+            MailPdf("$id/$name", header(msg, "From"), header(msg, "Subject"), msg.optString("internalDate").toLongOrNull() ?: 0, name,
+                decode(get("messages/$id/attachments/$attachment").getString("data")))
         }
-        return out
     }
 
     /** Alert emails from [senders] since [since], oldest first, as plain text. */

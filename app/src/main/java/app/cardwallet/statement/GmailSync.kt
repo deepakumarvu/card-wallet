@@ -67,30 +67,30 @@ object GmailSync {
     /** [progress] gets short status lines while the sync runs ("Statement 3 of 12…"). */
     suspend fun sync(context: Context, dao: WalletDao, token: String, profile: PdfProfile, progress: (String) -> Unit = {}): String {
         val prefs = context.getSharedPreferences("gmail", Context.MODE_PRIVATE)
-        // Statements that failed to unlock before this version weren't kept: fetch everything once more.
-        if (!prefs.getBoolean("refetch_v2_card_names", false)) {
-            prefs.edit().remove("seen_pdfs").remove("synced_up_to").putBoolean("refetch_v2_card_names", true).apply()
-        }
         val cards = dao.allCards()
         val banks = cards.filter { !it.isDebit }.map { it.bank }.distinct()
         val now = System.currentTimeMillis()
         val since = prefs.getLong("synced_up_to", 0).takeIf { it > 0 }?.minus(DAY) ?: (now - FIRST_LOOK_DAYS * DAY)
-        val seen = prefs.getStringSet("seen_pdfs", emptySet()).orEmpty().toMutableSet()
+        // Statement emails already handled, by Gmail message id; saved after each one, so a sync that's
+        // cut short (app closed, update installed) carries on where it stopped.
+        val seen = prefs.getStringSet("seen_statement_emails", emptySet()).orEmpty().toMutableSet()
         val gmail = GmailApi(token)
 
         var statements = 0
         var fromStatements = 0
         progress("Searching Gmail for statements…")
-        val pdfs = gmail.statements(Date(since), banks.flatMap { statementFrom[it].orEmpty() }, banks.flatMap { domains[it].orEmpty() }, { it in seen }) { i, n ->
-            progress("Downloading statement $i of $n…")
-        }
-        for ((i, pdf) in pdfs.withIndex()) {
-            progress("Reading statement ${i + 1} of ${pdfs.size}…")
-            val received = Instant.ofEpochMilli(pdf.receivedAt).atZone(ZoneId.systemDefault()).toLocalDate()
-            val outcome = StatementImport.import(context, dao, pdf.bytes, profile, received, "${pdf.from.substringAfter('<').substringBefore('>')} · ${pdf.fileName}")
-            statements++
-            fromStatements += outcome.added
-            seen += pdf.key
+        val fresh = gmail.statementIds(Date(since), banks.flatMap { statementFrom[it].orEmpty() }, banks.flatMap { domains[it].orEmpty() })
+            .filter { it !in seen }
+        for ((i, id) in fresh.withIndex()) {
+            progress("${fresh.size} new statement email${if (fresh.size == 1) "" else "s"}: reading ${i + 1} of ${fresh.size}…")
+            for (pdf in gmail.pdfsOf(id)) {
+                val received = Instant.ofEpochMilli(pdf.receivedAt).atZone(ZoneId.systemDefault()).toLocalDate()
+                val outcome = StatementImport.import(context, dao, pdf.bytes, profile, received, "${pdf.from.substringAfter('<').substringBefore('>')} · ${pdf.fileName}")
+                statements++
+                fromStatements += outcome.added
+            }
+            seen += id
+            prefs.edit().putStringSet("seen_statement_emails", seen.toSet()).apply()
         }
 
         var fromAlerts = 0
@@ -106,7 +106,7 @@ object GmailSync {
             }
         }
 
-        prefs.edit().putLong("synced_up_to", now).putStringSet("seen_pdfs", seen).apply()
+        prefs.edit().putLong("synced_up_to", now).apply()
         val summary = "Gmail: $statements statement${if (statements == 1) "" else "s"} ($fromStatements new spends), " +
             "$fromAlerts new spend${if (fromAlerts == 1) "" else "s"} from alert emails."
         dao.log(summary)
