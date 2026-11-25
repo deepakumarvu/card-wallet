@@ -1,6 +1,17 @@
 package app.cardwallet
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.composed
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -126,20 +137,47 @@ fun CardFace(
     status: String? = null,
     figures: List<Pair<String, String>> = emptyList(),
     progress: Float? = null,
+    /** The card in focus: tilts with the phone and a light sweep runs across it. */
+    live: Boolean = false,
     corner: @Composable BoxScope.() -> Unit = {},
 ) {
     val colors = cardGradient(card)
+    val tilt = if (live) rememberTilt().value else Offset.Zero
+    val sweep = if (live) {
+        val t = rememberInfiniteTransition(label = "sheen")
+        t.animateFloat(-0.6f, 1.6f, infiniteRepeatable(tween(4200, delayMillis = 1800, easing = FastOutSlowInEasing)), label = "sweep").value
+    } else -1f
+    val grain = remember { grainPoints() }
     Box(
         modifier
             .fillMaxWidth()
             .aspectRatio(1.586f)
+            .graphicsLayer {
+                rotationY = tilt.x * 9f
+                rotationX = -tilt.y * 9f
+                cameraDistance = 14f * density
+            }
             .clip(RoundedCornerShape(22.dp))
-            .background(Brush.linearGradient(colors, start = Offset.Zero, end = Offset.Infinite)),
+            .background(Brush.linearGradient(colors, start = Offset.Zero, end = Offset.Infinite))
+            .border(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.35f), Color.Transparent, Color.White.copy(alpha = 0.12f))), RoundedCornerShape(22.dp)),
     ) {
-        // Soft light shapes for depth.
         Canvas(Modifier.matchParentSize()) {
-            drawCircle(Color.White.copy(alpha = 0.07f), radius = size.width * 0.55f, center = Offset(size.width * 1.05f, -size.height * 0.1f))
+            // Soft light shapes for depth, nudged by the tilt.
+            drawCircle(Color.White.copy(alpha = 0.07f), radius = size.width * 0.55f,
+                center = Offset(size.width * (1.05f + tilt.x * 0.1f), -size.height * (0.1f - tilt.y * 0.1f)))
             drawCircle(Color.White.copy(alpha = 0.05f), radius = size.width * 0.4f, center = Offset(-size.width * 0.1f, size.height * 1.1f))
+            // Film grain.
+            grain.forEach { (x, y, light) ->
+                drawCircle(if (light) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.08f), 0.9f, Offset(x * size.width, y * size.height))
+            }
+            // A band of light: sweeps across now and then, and slides as the phone tilts.
+            val at = (if (live) sweep else 0.3f) + tilt.x * 0.25f
+            val band = size.width * 0.35f
+            val x = at * size.width
+            drawRect(Brush.linearGradient(
+                listOf(Color.Transparent, Color.White.copy(alpha = if (live) 0.16f else 0.06f), Color.Transparent),
+                start = Offset(x - band, 0f), end = Offset(x + band, size.height),
+            ))
         }
         Column(Modifier.matchParentSize().padding(horizontal = 18.dp, vertical = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -164,7 +202,7 @@ fun CardFace(
                     .background(Brush.linearGradient(listOf(Color(0xFFE9D9A6), Color(0xFFB79A55)))))
                 Spacer(Modifier.width(16.dp))
                 Text("••••  ••••  ••••  ${card.last4.ifBlank { "····" }}", color = Color.White.copy(alpha = 0.92f), fontSize = 16.sp,
-                    fontFamily = FontFamily.Monospace, letterSpacing = 1.sp, maxLines = 1)
+                    fontFamily = Body, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp, maxLines = 1)
             }
             Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.Bottom) {
@@ -280,3 +318,48 @@ fun Panel(modifier: Modifier = Modifier, content: @Composable () -> Unit) {
 
 @Composable
 fun Dot(color: Color, size: Dp = 10.dp) = Box(Modifier.size(size).clip(CircleShape).background(color))
+
+/** Fixed random dots for film grain: (x, y, light?) in 0..1. */
+private fun grainPoints(): List<Triple<Float, Float, Boolean>> {
+    val r = java.util.Random(42)
+    return List(900) { Triple(r.nextFloat(), r.nextFloat(), r.nextBoolean()) }
+}
+
+/** How the phone is tilted from where it was when the screen opened, each axis -1..1, smoothed. */
+@Composable
+fun rememberTilt(): androidx.compose.runtime.State<Offset> {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val tilt = remember { androidx.compose.runtime.mutableStateOf(Offset.Zero) }
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        val sensors = context.getSystemService(android.hardware.SensorManager::class.java)
+        val sensor = sensors?.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY)
+        var rest: Offset? = null
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) {
+                val now = Offset(e.values[0], e.values[1])
+                val start = rest ?: now.also { rest = it }
+                val target = Offset(((start.x - now.x) / 4f).coerceIn(-1f, 1f), ((now.y - start.y) / 4f).coerceIn(-1f, 1f))
+                tilt.value = tilt.value + (target - tilt.value) * 0.18f
+            }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+        if (sensor != null) sensors.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sensors?.unregisterListener(listener) }
+    }
+    return tilt
+}
+
+/** A rupee amount that counts up to [paise] when it first shows or changes. */
+@Composable
+fun CountingRupees(paise: Long, style: androidx.compose.ui.text.TextStyle, color: Color = Color.Unspecified, modifier: Modifier = Modifier) {
+    val value = remember { androidx.compose.animation.core.Animatable(0f) }
+    androidx.compose.runtime.LaunchedEffect(paise) { value.animateTo(paise.toFloat(), tween(900, easing = FastOutSlowInEasing)) }
+    Text(rupees(value.value.toLong().let { if (paise % 100 == 0L) it / 100 * 100 else it }), style = style, color = color, modifier = modifier, maxLines = 1)
+}
+
+/** Sinks a little while pressed, like a physical button. */
+fun Modifier.pressScale(interaction: androidx.compose.foundation.interaction.MutableInteractionSource): Modifier = composed {
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by androidx.compose.animation.core.animateFloatAsState(if (pressed) 0.96f else 1f, androidx.compose.animation.core.spring(stiffness = 600f), label = "press")
+    graphicsLayer { scaleX = scale; scaleY = scale }
+}

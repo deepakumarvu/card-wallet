@@ -1,6 +1,7 @@
 package app.cardwallet
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.navigationBarsPadding
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import androidx.compose.runtime.produceState
@@ -192,7 +193,7 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
             SectionLabel(if (merchant.isBlank()) "Best for any spend" else "Best at ${merchant.trim()}")
             Spacer(Modifier.height(10.dp))
             val pointsCard = best.card.showPoints && best.card.rupeesPerPoint != 1.0
-            CardFace(best.card, status = "★ BEST", figures = listOfNotNull(
+            CardFace(best.card, status = "★ BEST", live = true, figures = listOfNotNull(
                 (if (international) "Net" else "Back") to rupees(best.cashbackPaise),
                 if (pointsCard) "Points" to reward(best.rewardUnits, best.card)
                 else "Rate" to pct(Cashback.valuePercent(best.rule?.ratePercent ?: best.card.baseRatePercent, best.card)),
@@ -326,8 +327,8 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
             item { Text("This cycle", style = MaterialTheme.typography.headlineMedium) }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    StatTile("Spent", rupees(spentAll), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
-                    StatTile("Cashback", rupees(backAll), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
+                    StatTile("Spent", rupees(spentAll), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f), spentAll)
+                    StatTile("Cashback", rupees(backAll), MaterialTheme.colorScheme.primary, Modifier.weight(1f), backAll)
                 }
             }
             if (unread.isNotEmpty()) item {
@@ -423,7 +424,8 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
             onClick = { editing = Spend(cardId = cards.first().id, amountPaise = 0, merchant = "", timeMillis = System.currentTimeMillis()) },
             icon = { Icon(Icons.Default.Add, null) }, text = { Text("Add spend") },
             containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
-            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+            // Sits above the floating tab bar.
+            modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(end = 20.dp, bottom = 92.dp),
         )
     }
 
@@ -450,12 +452,13 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
 }
 
 @Composable
-private fun StatTile(label: String, value: String, valueColor: Color, modifier: Modifier) {
+private fun StatTile(label: String, value: String, valueColor: Color, modifier: Modifier, paise: Long? = null) {
     Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(20.dp)) {
         Column(Modifier.padding(16.dp)) {
             SectionLabel(label)
             Spacer(Modifier.height(6.dp))
-            Text(value, style = MaterialTheme.typography.headlineSmall, color = valueColor, maxLines = 1)
+            if (paise != null) CountingRupees(paise, MaterialTheme.typography.headlineMedium, valueColor)
+            else Text(value, style = MaterialTheme.typography.headlineMedium, color = valueColor, maxLines = 1)
         }
     }
 }
@@ -625,6 +628,7 @@ private fun CardStack(
                                     })
                                     .clickable { onToggle(card) },
                                 status = cardBadge(card),
+                                live = open,
                                 // In the figure row, so it never sits on top of the network mark.
                                 figures = if (card.isDebit) emptyList() else listOf(
                                     "Statement" to (card.statementDay?.let { "Day $it" } ?: "Not set"),
