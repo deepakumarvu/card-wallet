@@ -94,6 +94,14 @@ private fun dayLabel(millis: Long): String {
 /** Value back as "5%"; for points cards the value of the points, e.g. 2.5 pts per ₹100 at ₹0.50 → "1.25%". */
 private fun valuePct(rate: Double, card: Card) = pct(Cashback.valuePercent(rate, card))
 
+/** "Bill ₹12,340 due 10 Dec (min ₹620)" from a card's latest statement, or null without one. */
+private fun billLine(s: StatementRecord?): String? {
+    s ?: return null
+    val due = s.dueDate?.let { " due " + shortDate.format(Date(java.time.LocalDate.ofEpochDay(it).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli())) }.orEmpty()
+    val min = s.minDuePaise?.takeIf { it > 0 }?.let { " (min ${rupees(it)})" }.orEmpty()
+    return s.totalDuePaise?.let { "Last bill ${rupees(it)}$due$min" }
+}
+
 /** Rule name, with the value % added only when the name doesn't already say it. */
 private fun ruleTitle(r: Rule, card: Card) = valuePct(r.ratePercent, card).let { if (r.label.contains(it)) r.label else "${r.label} · $it" }
 
@@ -282,6 +290,8 @@ private fun EmptyState(title: String, body: String) {
 
 @Composable
 fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFilter: (Long?) -> Unit) {
+    val statements by dao.statements().collectAsState(emptyList())
+    val lastBill = remember(statements) { statements.groupBy { it.cardId }.mapValues { it.value.first() } }
     val cards by dao.cards().collectAsState(emptyList())
     val rules by dao.rules().collectAsState(emptyList())
     val spends by dao.spends().collectAsState(emptyList())
@@ -299,7 +309,7 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
 
     // Each card counts its own cycle.
     val cycleSpends = remember(cards, spends) {
-        cards.flatMap { c -> spends.filter { it.cardId == c.id && it.timeMillis >= Cashback.cycleStart(c.statementDay) } }
+        cards.flatMap { c -> spends.filter { it.cardId == c.id && it.timeMillis >= Cashback.cycleStart(c) } }
     }
     val totals = remember(cards, rules, spends, merchants) { cards.associateWith { Cashback.replayCycle(it, rules, spends, merchants).second } }
     // Reading each waiting SMS runs ~190 bank parsers; do it only when the messages or cards change.
@@ -348,8 +358,9 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     Column(Modifier.weight(1f)) {
                                         Text(c.name, style = MaterialTheme.typography.titleSmall)
-                                        Text("since ${shortDate.format(Date(Cashback.cycleStart(c.statementDay)))}",
+                                        Text("since ${shortDate.format(Date(Cashback.cycleStart(c)))}",
                                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        billLine(lastBill[c.id])?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                     }
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(rupees(t.spentPaise), style = MaterialTheme.typography.titleSmall)
@@ -485,6 +496,7 @@ private fun CategoryPanel(cycleSpends: List<Spend>, merchants: List<MerchantCate
 
 @Composable
 fun CardsScreen(dao: WalletDao, modifier: Modifier, onShowSpends: (Long) -> Unit) {
+    val statements by dao.statements().collectAsState(emptyList())
     val cards by dao.cards().collectAsState(emptyList())
     val rules by dao.rules().collectAsState(emptyList())
     val spends by dao.spends().collectAsState(emptyList())
@@ -519,7 +531,7 @@ fun CardsScreen(dao: WalletDao, modifier: Modifier, onShowSpends: (Long) -> Unit
                         onEditRule = { editRule = it },
                         onAddRule = { editRule = Rule(cardId = card.id, label = "", keywords = "", category = null, ratePercent = 5.0, monthlyCapPaise = null) },
                         onRestoreRules = { missing -> scope.launch { Starter.restoreRules(dao, card, missing) } },
-                        onShowSpends = { onShowSpends(card.id) })
+                        onShowSpends = { onShowSpends(card.id) }, lastBill = statements.firstOrNull { it.cardId == card.id })
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -634,15 +646,16 @@ private fun CardStack(
 private fun CardDetails(
     card: Card, rules: List<Rule>, spends: List<Spend>, merchants: List<MerchantCategory>,
     onEditRule: (Rule) -> Unit, onAddRule: () -> Unit, onRestoreRules: (List<Starter.RuleTemplate>) -> Unit,
-    onShowSpends: () -> Unit,
+    onShowSpends: () -> Unit, lastBill: StatementRecord? = null,
 ) {
     val (earned, total) = remember(card, rules, spends, merchants) { Cashback.replayCycle(card, rules, spends, merchants) }
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
         Column(Modifier.weight(1f)) {
             Text("This cycle: ${rupees(total.spentPaise)} spent" + if (card.isDebit) "" else " · ${backText(total.cashbackPaise, total.rewardUnits, card)} back",
                 style = MaterialTheme.typography.titleSmall)
-            Text("since ${shortDate.format(Date(Cashback.cycleStart(card.statementDay)))}",
+            Text("since ${shortDate.format(Date(Cashback.cycleStart(card)))}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            billLine(lastBill)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         TextButton(onClick = onShowSpends) { Text("See spends") }
     }

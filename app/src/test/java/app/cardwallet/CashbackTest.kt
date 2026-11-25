@@ -270,4 +270,14 @@ class CashbackTest {
         // At home the fee doesn't apply.
         assertEquals(12_50L, Cashback.rank(1000_00, "HOTEL", listOf(regalia), emptyList(), emptyList(), table, now).single().cashbackPaise)
     }
+
+    @Test
+    fun `cycle starts the day after the latest statement in the PDF`() {
+        // Statement day says 20, but this month's statement was dated the 19th (e.g. a holiday).
+        val card = swiggyHdfc.copy(statementDay = 20, lastStatementEpochDay = java.time.LocalDate.of(2026, 11, 19).toEpochDay())
+        assertEquals(day(2026, 11, 20), Cashback.cycleStart(card, now))
+        // A statement older than 45 days is stale: fall back to the statement day.
+        val stale = card.copy(lastStatementEpochDay = java.time.LocalDate.of(2026, 8, 19).toEpochDay())
+        assertEquals("statement day 20, today 20 Nov: cycle began 21 Oct", day(2026, 10, 21), Cashback.cycleStart(stale, now))
+    }
 }

@@ -54,6 +54,8 @@ data class Card(
     @ColumnInfo(defaultValue = "3.5") val forexMarkupPercent: Double = 3.5,
     /** False when the card gives no reward on international spends (Scapia: 0% fee, no coins). */
     @ColumnInfo(defaultValue = "1") val rewardsAbroad: Boolean = true,
+    /** Date of the latest imported statement (epoch day); the current cycle starts the day after. */
+    val lastStatementEpochDay: Long? = null,
 ) {
     /** True when SMS digits [digits] belong to this card, now or before a replacement. */
     fun hasDigits(digits: String?): Boolean =
@@ -127,6 +129,22 @@ data class IgnoredShape(
     val createdMillis: Long,
 )
 
+/** One imported statement: its dates and bill, as printed in the PDF. Dates are epoch days. */
+@Entity(
+    tableName = "statements",
+    foreignKeys = [ForeignKey(Card::class, ["id"], ["cardId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("cardId"), Index(value = ["cardId", "statementDate"], unique = true)],
+)
+data class StatementRecord(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val cardId: Long,
+    val statementDate: Long,
+    val periodStart: Long?,
+    val dueDate: Long?,
+    val totalDuePaise: Long?,
+    val minDuePaise: Long?,
+)
+
 /** One line in the on-phone activity log, for debugging later. */
 @Entity(tableName = "activity_log")
 data class LogEntry(
@@ -153,6 +171,10 @@ interface WalletDao {
     @Query("SELECT * FROM ignored_shapes") suspend fun allIgnoredShapes(): List<IgnoredShape>
     @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIgnoredShape(shape: IgnoredShape): Long
     @Delete suspend fun delete(shape: IgnoredShape)
+
+    @Query("SELECT * FROM statements ORDER BY statementDate DESC") fun statements(): Flow<List<StatementRecord>>
+    /** Same card and date replaces the earlier copy (a re-import). */
+    @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun saveStatement(statement: StatementRecord)
 
     @Insert suspend fun insertLog(entry: LogEntry)
     @Query("SELECT * FROM activity_log ORDER BY id DESC") fun logs(): Flow<List<LogEntry>>
@@ -187,11 +209,11 @@ interface WalletDao {
 }
 
 @Database(
-    entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class, LogEntry::class, IgnoredShape::class],
-    version = 10,
+    entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class, LogEntry::class, IgnoredShape::class, StatementRecord::class],
+    version = 11,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
-        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10),
+        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10), AutoMigration(from = 10, to = 11),
     ],
 )
 abstract class WalletDb : RoomDatabase() {

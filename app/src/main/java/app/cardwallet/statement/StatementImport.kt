@@ -3,6 +3,7 @@ package app.cardwallet.statement
 import android.content.Context
 import app.cardwallet.Card
 import app.cardwallet.Spend
+import app.cardwallet.StatementRecord
 import app.cardwallet.WalletDao
 import app.cardwallet.log
 import app.cardwallet.rupees
@@ -90,8 +91,14 @@ object StatementImport {
             ?: return done(dao, Outcome("Statement$from for ${issuer ?: "an unknown bank"} card ending ${first.last4 ?: "?"}: no matching card. Add the card or its digits, then import again."))
         val parsed = if (issuer == null) Parsers.forIssuer(card.bank).parse(text, received) else first
 
-        parsed.statementDate?.dayOfMonth?.takeIf { it != card.statementDay }?.let { day ->
-            dao.saveLogged(card.copy(statementDay = day))
+        // The PDF's statement date sets the card's cycle; the bill is kept for the screens.
+        parsed.statementDate?.let { date ->
+            val day = date.toEpochDay()
+            if (card.lastStatementEpochDay == null || day > card.lastStatementEpochDay) {
+                dao.saveLogged(card.copy(statementDay = date.dayOfMonth, lastStatementEpochDay = day))
+            }
+            dao.saveStatement(StatementRecord(cardId = card.id, statementDate = day, periodStart = parsed.periodStart?.toEpochDay(),
+                dueDate = parsed.dueDate?.toEpochDay(), totalDuePaise = parsed.totalDuePaise, minDuePaise = parsed.minDuePaise))
         }
         val spends = newSpends(parsed, card, dao.allSpends())
         var added = 0

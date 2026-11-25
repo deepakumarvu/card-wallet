@@ -140,7 +140,7 @@ object Cashback {
         table: List<MerchantCategory>,
         now: Long = System.currentTimeMillis(),
     ): Pair<CycleEarned, CycleTotal> {
-        val start = cycleStart(card.statementDay, now)
+        val start = cycleStart(card, now)
         val cycleSpends = spends.filter { it.cardId == card.id && it.timeMillis >= start }.sortedBy { it.timeMillis }
         // Base-tied caps follow the whole cycle's base, as the bank works it out at statement time:
         // a bill paid on day 1 still gets its rate once enough other spends land later.
@@ -229,6 +229,18 @@ object Cashback {
         cal.set(Calendar.DAY_OF_MONTH, statementIn(cal))
         cal.add(Calendar.DAY_OF_MONTH, 1)
         return cal.timeInMillis
+    }
+
+    /**
+     * Start of [card]'s current cycle: the day after its latest imported statement (the date printed in
+     * the PDF), while that's under 45 days old; otherwise from its statement day.
+     */
+    fun cycleStart(card: Card, now: Long = System.currentTimeMillis()): Long {
+        card.lastStatementEpochDay?.let { day ->
+            val start = java.time.LocalDate.ofEpochDay(day + 1).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+            if (now >= start && now - start < 45 * 86_400_000L) return start
+        }
+        return cycleStart(card.statementDay, now)
     }
 
     /** First day of the next cycle, when caps reset. */
