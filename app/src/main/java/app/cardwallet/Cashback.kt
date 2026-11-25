@@ -190,8 +190,10 @@ object Cashback {
         table: List<MerchantCategory>,
         now: Long = System.currentTimeMillis(),
         international: Boolean = false,
+        /** Rank for a whole category (a cheat-sheet tile) instead of a named merchant. */
+        category: String? = null,
     ): List<Pick> {
-        val categories = categoriesOf(merchant, table)
+        val categories = category?.let { setOf(it) } ?: categoriesOf(merchant, table)
         return cards.filter { !it.isDebit && (international || !it.internationalOnly) }.map { card ->
             val earned = replayCycle(card, rules, spends, table, now).first
             val e = best(card, rules, amountPaise, merchant, categories, earned)
@@ -210,6 +212,16 @@ object Cashback {
                 rule?.let { earned.byRule[it.id] } ?: 0, cappedOut, unlockFor(card, rules, amountPaise, merchant, categories, earned, e), fee)
         }.sortedByDescending { it.cashbackPaise }
     }
+
+    /** Tiles on the cheat sheet, in order; "International" is added after them. */
+    val cheatSheetCategories = listOf("Dining", "Online", "Groceries", "Travel", "Fuel", "Bills", "Jewellery")
+    const val INTERNATIONAL = "International"
+
+    /** Best card right now for each cheat-sheet tile, for a spend of [amountPaise]; null when no card fits. */
+    fun cheatSheet(amountPaise: Long, cards: List<Card>, rules: List<Rule>, spends: List<Spend>, table: List<MerchantCategory>,
+                   now: Long = System.currentTimeMillis()): List<Pair<String, Pick?>> =
+        cheatSheetCategories.map { it to rank(amountPaise, "", cards, rules, spends, table, now, category = it).firstOrNull() } +
+            (INTERNATIONAL to rank(amountPaise, "", cards, rules, spends, table, now, international = true).firstOrNull())
 
     /**
      * Start of the current cycle (phone's time zone): the day after the statement day, or the 1st

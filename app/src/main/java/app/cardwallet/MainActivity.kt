@@ -1,6 +1,8 @@
 package app.cardwallet
 
 import android.os.Bundle
+import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.launch
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.spring
@@ -52,6 +54,14 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.core.content.edit
 
 class MainActivity : ComponentActivity() {
+    /** Leaving the app: refresh the home-screen cheat sheet with what changed. */
+    override fun onStop() {
+        super.onStop()
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            runCatching { app.cardwallet.widget.CheatSheetWidget().updateAll(applicationContext) }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()

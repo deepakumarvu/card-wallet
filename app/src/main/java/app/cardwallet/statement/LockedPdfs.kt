@@ -19,10 +19,17 @@ object LockedPdfs {
 
     private fun dir(context: Context) = File(context.filesDir, "locked").apply { mkdirs() }
 
-    fun keep(context: Context, bytes: ByteArray, label: String, received: LocalDate?) {
+    /** PDFs already opened with a typed password, by fingerprint: a fresh download of the same file isn't kept again. */
+    private fun opened(context: Context) = prefs(context).getStringSet("opened_pdfs", emptySet()).orEmpty()
+    private fun markOpened(context: Context, id: String) = prefs(context).edit().putStringSet("opened_pdfs", opened(context) + id).apply()
+
+    /** Keeps a locked PDF for later; false when this exact file was already opened before (nothing to do). */
+    fun keep(context: Context, bytes: ByteArray, label: String, received: LocalDate?): Boolean {
         val id = Pdf.sha256(bytes).take(16)
+        if (id in opened(context)) return false
         File(dir(context), "$id.pdf").writeBytes(bytes)
         File(dir(context), "$id.json").writeText(JSONObject().put("label", label).put("received", received?.toString() ?: "").toString())
+        return true
     }
 
     fun list(context: Context): List<Item> = dir(context).listFiles { f -> f.name.endsWith(".json") }.orEmpty().mapNotNull { f ->
@@ -31,6 +38,9 @@ object LockedPdfs {
             Item(f.nameWithoutExtension, o.optString("label"), o.optString("received").takeIf { it.isNotEmpty() }?.let(LocalDate::parse))
         }.getOrNull()
     }.sortedByDescending { it.received }
+
+    /** Drop a locked PDF without opening it (e.g. one you already opened); it won't be kept again. */
+    fun dismiss(context: Context, item: Item) { markOpened(context, item.id); remove(context, item.id) }
 
     private fun remove(context: Context, id: String) {
         File(dir(context), "$id.pdf").delete()
@@ -49,6 +59,7 @@ object LockedPdfs {
         val bytes = File(dir(context), "${item.id}.pdf").takeIf { it.exists() }?.readBytes() ?: return "That PDF is gone."
         Pdf.init(context) // PDFBox needs its resources loaded before the first PDF is opened
         if (Pdf.extract(bytes, listOf(password)) !is Pdf.Result.Text) return "That password didn't open it."
+        markOpened(context, item.id)
 
         if (item.oneOffPassword) {
             remove(context, item.id)

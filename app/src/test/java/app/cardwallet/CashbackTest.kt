@@ -280,4 +280,17 @@ class CashbackTest {
         val stale = card.copy(lastStatementEpochDay = java.time.LocalDate.of(2026, 8, 19).toEpochDay())
         assertEquals("statement day 20, today 20 Nov: cycle began 21 Oct", day(2026, 10, 21), Cashback.cycleStart(stale, now))
     }
+
+    @Test
+    fun `cheat sheet shows the best card per category, international last`() {
+        val ultimo = Card(14, "Ultimo", "HDFC Bank", "4444", 1.0)
+        val bills10 = Rule(140, 14, "Bills 10%", "", "Bills", 10.0, 1000_00)
+        val scapia = Card(15, "Scapia", "Federal Bank", "5555", 10.0, rupeesPerPoint = 0.2, internationalOnly = true, forexMarkupPercent = 0.0, rewardsAbroad = false)
+        val sheet = Cashback.cheatSheet(1000_00, listOf(axisAce, ultimo, scapia), rules + bills10, emptyList(), table, now).toMap()
+        assertEquals(Cashback.cheatSheetCategories + Cashback.INTERNATIONAL, sheet.keys.toList())
+        assertEquals(ultimo, sheet["Bills"]?.card)
+        assertEquals(100_00L, sheet["Bills"]?.cashbackPaise)
+        assertEquals("plain dining: Axis Ace's 1.5% base", axisAce, sheet["Dining"]?.card)
+        assertEquals(scapia, sheet[Cashback.INTERNATIONAL]?.card)
+    }
 }

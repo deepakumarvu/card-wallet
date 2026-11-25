@@ -449,6 +449,11 @@ private fun LockedPdfsScreen(dao: WalletDao, onClose: () -> Unit) {
                                         busy = false
                                     }
                                 }) { Text(if (busy) "…" else "Unlock") }
+                                TextButton(enabled = !busy, onClick = {
+                                    app.cardwallet.statement.LockedPdfs.dismiss(context, item)
+                                    scope.launch { dao.log("Locked PDF removed without opening: ${item.label}") }
+                                    items = app.cardwallet.statement.LockedPdfs.list(context)
+                                }) { Text("Remove") }
                             }
                         }
                     }

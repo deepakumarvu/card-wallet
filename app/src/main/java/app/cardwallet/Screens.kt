@@ -81,7 +81,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private val shortDate = SimpleDateFormat("d MMM", Locale.forLanguageTag("en-IN"))
+internal val shortDate = SimpleDateFormat("d MMM", Locale.forLanguageTag("en-IN"))
 private fun dayLabel(millis: Long): String {
     val today = Calendar.getInstance()
     val day = Calendar.getInstance().apply { timeInMillis = millis }
@@ -93,7 +93,7 @@ private fun dayLabel(millis: Long): String {
 }
 
 /** Value back as "5%"; for points cards the value of the points, e.g. 2.5 pts per ₹100 at ₹0.50 → "1.25%". */
-private fun valuePct(rate: Double, card: Card) = pct(Cashback.valuePercent(rate, card))
+internal fun valuePct(rate: Double, card: Card) = pct(Cashback.valuePercent(rate, card))
 
 /** "Bill ₹12,340 due 10 Dec (min ₹620)" from a card's latest statement, or null without one. */
 private fun billLine(s: StatementRecord?): String? {
@@ -104,153 +104,19 @@ private fun billLine(s: StatementRecord?): String? {
 }
 
 /** Rule name, with the value % added only when the name doesn't already say it. */
-private fun ruleTitle(r: Rule, card: Card) = valuePct(r.ratePercent, card).let { if (r.label.contains(it)) r.label else "${r.label} · $it" }
+internal fun ruleTitle(r: Rule, card: Card) = valuePct(r.ratePercent, card).let { if (r.label.contains(it)) r.label else "${r.label} · $it" }
 
 /** What a cap means, for rules whose cap follows base earnings. */
-private fun capNote(r: Rule) = r.capBaseMultiple?.let { "cap = ${it.toBigDecimal().stripTrailingZeros().toPlainString()}× base earned this cycle" }
+internal fun capNote(r: Rule) = r.capBaseMultiple?.let { "cap = ${it.toBigDecimal().stripTrailingZeros().toPlainString()}× base earned this cycle" }
 
-private val quickPicks = listOf("Zomato", "Swiggy", "Amazon", "Flipkart", "Blinkit", "Zepto", "Myntra", "Uber")
+internal val quickPicks = listOf("Zomato", "Swiggy", "Amazon", "Flipkart", "Blinkit", "Zepto", "Myntra", "Uber")
 
-private val screenPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 100.dp)
+internal val screenPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 100.dp)
 
 // ---------- Best card ----------
 
 @Composable
-fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
-    val cards by dao.cards().collectAsState(emptyList())
-    val rules by dao.rules().collectAsState(emptyList())
-    val spends by dao.spends().collectAsState(emptyList())
-    val merchants by dao.merchants().collectAsState(emptyList())
-    var merchant by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("1000") }
-    var international by remember { mutableStateOf(false) }
-    var searchOpen by remember { mutableStateOf(false) }
-    val paise = toPaise(amount) ?: 0
-    // Ranking replays every card's cycle; redo it only when an input changes, not on every redraw.
-    val picks = remember(paise, merchant, cards, rules, spends, merchants, international) {
-        Cashback.rank(paise, merchant, cards, rules, spends, merchants, international = international)
-    }
-
-    LazyColumn(modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            Text("Where are you\npaying?", style = MaterialTheme.typography.headlineMedium)
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(Modifier.weight(1.5f)) {
-                    OutlinedTextField(merchant, { merchant = it; searchOpen = true }, placeholder = { Text("Search merchant") }, singleLine = true,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) searchOpen = true })
-                    val suggestions = remember(merchant, merchants, rules, spends) {
-                        Cashback.merchantSuggestions(merchant, merchants, rules, spends).filterNot { it.name.equals(merchant.trim(), ignoreCase = true) }
-                    }
-                    DropdownMenu(
-                        expanded = searchOpen && suggestions.isNotEmpty(),
-                        onDismissRequest = { searchOpen = false },
-                        properties = PopupProperties(focusable = false),
-                        modifier = Modifier.heightIn(max = 320.dp),
-                    ) {
-                        suggestions.forEach { s ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(s.name)
-                                        if (s.categories.isNotEmpty()) Text(s.categories.sorted().joinToString(", "),
-                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                },
-                                onClick = { merchant = s.name; searchOpen = false },
-                            )
-                        }
-                    }
-                }
-                OutlinedTextField(amount, { amount = it }, prefix = { Text("₹") }, singleLine = true,
-                    shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1f),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-            }
-            Spacer(Modifier.height(8.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                item {
-                    FilterChip(selected = international, onClick = { international = !international }, label = { Text("International") },
-                        shape = RoundedCornerShape(50))
-                }
-                items(quickPicks) { m ->
-                    FilterChip(selected = merchant.equals(m, ignoreCase = true), onClick = { merchant = m; searchOpen = false }, label = { Text(m) },
-                        shape = RoundedCornerShape(50))
-                }
-            }
-        }
-        if (cards.isEmpty()) {
-            item { EmptyState("No cards yet", "Add your cards on the Cards tab, and this shows which one pays most back.") }
-            return@LazyColumn
-        }
-        if (picks.isEmpty()) {
-            item { EmptyState("Only debit cards", "Debit cards are tracked but never suggested. Add a credit card to see picks.") }
-            return@LazyColumn
-        }
-        val best = picks.first()
-        item {
-            SectionLabel(if (merchant.isBlank()) "Best for any spend" else "Best at ${merchant.trim()}")
-            Spacer(Modifier.height(10.dp))
-            val pointsCard = best.card.showPoints && best.card.rupeesPerPoint != 1.0
-            CardFace(best.card, status = "★ BEST", live = true, figures = listOfNotNull(
-                (if (international) "Net" else "Back") to rupees(best.cashbackPaise),
-                if (pointsCard) "Points" to reward(best.rewardUnits, best.card)
-                else "Rate" to pct(Cashback.valuePercent(best.rule?.ratePercent ?: best.card.baseRatePercent, best.card)),
-            ))
-        }
-        item {
-            Panel {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val title = best.rule?.label ?: "Base rate"
-                        val rate = valuePct(best.rule?.ratePercent ?: best.card.baseRatePercent, best.card)
-                        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                        if (!title.contains(rate)) Pill(rate)
-                    }
-                    val rule = best.rule
-                    if (rule != null && best.capUnits != null) {
-                        CapBar(best.capUsedUnits, best.capUnits, shortDate.format(Date(Cashback.nextCycleStart(best.card.statementDay))), best.card)
-                        capNote(rule)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    }
-                    best.cappedOut?.let { CappedOutNote(it, best.card) }
-                    if (international) Text(
-                        "Abroad: ${pct(best.card.forexMarkupPercent)} forex fee (${rupees(best.forexFeePaise)})" +
-                            if (best.card.rewardsAbroad) ", rewards ${rupees(best.cashbackPaise + best.forexFeePaise)}" else ", no rewards abroad",
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-        // A card that would beat the best pick once its base-tied cap has room.
-        picks.filter { it.unlock != null && it.unlock.valuePaise > best.cashbackPaise }.forEach { p ->
-            item(key = "unlock-${p.card.id}") { UnlockNote(p) }
-        }
-        if (picks.size > 1) {
-            item { SectionLabel("Your other cards") }
-            items(picks.drop(1), key = { it.card.id }) { p ->
-                Panel {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CardSwatch(p.card)
-                            Spacer(Modifier.size(12.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(p.card.name, style = MaterialTheme.typography.titleMedium)
-                                Text(p.rule?.let { ruleTitle(it, p.card) } ?: "Base rate ${valuePct(p.card.baseRatePercent, p.card)}",
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Text(backText(p.cashbackPaise, p.rewardUnits, p.card), style = MaterialTheme.typography.titleMedium)
-                        }
-                        p.cappedOut?.let { CappedOutNote(it, p.card) }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/** "Airtel Axis could pay ₹206: Airtel recharges 25%, once you've put ₹10,300 more of other spends on it this cycle." */
-@Composable
-private fun UnlockNote(p: Cashback.Pick) {
+internal fun UnlockNote(p: Cashback.Pick) {
     val u = p.unlock ?: return
     Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -268,7 +134,7 @@ private fun UnlockNote(p: Cashback.Pick) {
 }
 
 @Composable
-private fun CappedOutNote(rule: Rule, card: Card) {
+internal fun CappedOutNote(rule: Rule, card: Card) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
         Spacer(Modifier.size(6.dp))
@@ -278,7 +144,7 @@ private fun CappedOutNote(rule: Rule, card: Card) {
 }
 
 @Composable
-private fun EmptyState(title: String, body: String) {
+internal fun EmptyState(title: String, body: String) {
     Panel {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium)

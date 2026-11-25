@@ -80,7 +80,7 @@ object StatementImport {
                 if (r.password.isNotEmpty() && r.password != password) prefs.edit().putStringSet("passwords_that_worked", worked + r.password).apply()
             }
             Pdf.Result.Locked -> {
-                LockedPdfs.keep(context, bytes, label, received)
+                if (!LockedPdfs.keep(context, bytes, label, received)) return done(dao, Outcome("Already opened this PDF$from before; skipped."))
                 return done(dao, Outcome("Couldn't unlock the PDF$from. It's kept under More → Statements → Locked PDFs: type its password there once.", locked = true))
             }
             is Pdf.Result.Failed -> return done(dao, Outcome("Couldn't read the PDF$from (${r.reason})."))

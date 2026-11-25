@@ -59,6 +59,8 @@ dependencies {
     // Gmail: Google sign-in for a read-only token; mail is read through the Gmail API.
     implementation("com.google.android.gms:play-services-auth:21.2.0")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    // Home-screen widget.
+    implementation("androidx.glance:glance-appwidget:1.1.1")
 
     testImplementation("junit:junit:4.13.2")
 }

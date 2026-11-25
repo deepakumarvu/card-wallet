@@ -186,7 +186,7 @@ fun CardFace(
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(card.name, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text(card.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                     Text("${card.bank} · •• ${card.last4.ifBlank { "····" }}", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, maxLines = 1)
                 }
                 status?.let {
@@ -201,7 +201,8 @@ fun CardFace(
                 Box(Modifier.size(34.dp, 25.dp).clip(RoundedCornerShape(5.dp))
                     .background(Brush.linearGradient(listOf(Color(0xFFE9D9A6), Color(0xFFB79A55)))))
                 Spacer(Modifier.width(16.dp))
-                Text("••••  ••••  ••••  ${card.last4.ifBlank { "····" }}", color = Color.White.copy(alpha = 0.92f), fontSize = 16.sp,
+                // Three groups so the last 4 always fit, even on the smaller carousel cards.
+                Text("••••  ••••  ${card.last4.ifBlank { "····" }}", color = Color.White.copy(alpha = 0.92f), fontSize = 16.sp,
                     fontFamily = Body, fontWeight = FontWeight.SemiBold, letterSpacing = 2.sp, maxLines = 1)
             }
             Spacer(Modifier.weight(1f))
