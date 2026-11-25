@@ -112,6 +112,46 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     val prefs = remember { context.getSharedPreferences("statements", android.content.Context.MODE_PRIVATE) }
     var profile by remember { mutableStateOf(app.cardwallet.statement.PdfProfile.fromJson(prefs.getString("profile", null))) }
     var editProfile by remember { mutableStateOf(false) }
+
+    // Gmail: Google sign-in gives a read-only token; Sync reads statements and alert emails with it.
+    val gmailPrefs = remember { context.getSharedPreferences("gmail", android.content.Context.MODE_PRIVATE) }
+    var gmail by remember { mutableStateOf(gmailPrefs.getString("email", "").orEmpty()) }
+    var syncing by remember { mutableStateOf(false) }
+    fun runSync(token: String, email: String) {
+        syncing = true
+        scope.launch {
+            val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, email, token, profile) } }
+            syncing = false
+            toast(result.getOrElse { "Gmail sync failed: ${it.message}" })
+            result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it") }
+        }
+    }
+    fun gotToken(result: com.google.android.gms.auth.api.identity.AuthorizationResult) {
+        val token = result.accessToken ?: return toast("Google didn't give access to Gmail.")
+        @Suppress("DEPRECATION")
+        val email = result.toGoogleSignInAccount()?.email ?: gmail
+        if (email.isBlank()) return toast("Couldn't tell which Gmail account; sign in again.")
+        gmail = email
+        gmailPrefs.edit().putString("email", email).apply()
+        runSync(token, email)
+    }
+    val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        runCatching { com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(res.data) }
+            .onSuccess { gotToken(it) }
+            .onFailure { toast("Google sign-in cancelled.") }
+    }
+    fun connectAndSync() {
+        val request = com.google.android.gms.auth.api.identity.AuthorizationRequest.builder()
+            .setRequestedScopes(listOf(com.google.android.gms.common.api.Scope(app.cardwallet.statement.GmailSync.SCOPE), com.google.android.gms.common.api.Scope("email")))
+            .build()
+        com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(context).authorize(request)
+            .addOnSuccessListener { r ->
+                val pending = r.pendingIntent
+                if (r.hasResolution() && pending != null) consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build())
+                else gotToken(r)
+            }
+            .addOnFailureListener { toast("Google sign-in failed: ${it.message}") }
+    }
     val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
@@ -143,6 +183,19 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { smsPermission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)) }) {
                         Text("Read SMS from last month on")
+                    }
+                }
+            }
+        }
+        item {
+            Panel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PanelTitle(Icons.Default.Email, "Gmail")
+                    Text("Reads statement PDFs and card alert emails from your Gmail, read-only. Mail goes straight from Gmail to this phone; nothing is sent anywhere else.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (gmail.isNotBlank()) Text("Connected: $gmail", style = MaterialTheme.typography.bodySmall)
+                    Button(enabled = !syncing, onClick = { connectAndSync() }) {
+                        Text(when { syncing -> "Syncing…"; gmail.isBlank() -> "Connect Gmail"; else -> "Sync now" })
                     }
                 }
             }

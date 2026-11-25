@@ -20,6 +20,13 @@ android {
         compose = true
     }
 
+    // Mail and PDF libraries each ship the same licence files; keep one set out of the APK.
+    packaging {
+        resources {
+            excludes += setOf("/META-INF/LICENSE.md", "/META-INF/NOTICE.md", "/META-INF/LICENSE", "/META-INF/NOTICE", "/org/bouncycastle/pqc/**")
+        }
+    }
+
     buildTypes {
         // The phone runs the release build: shrunk and optimised, Compose is much smoother than debug.
         // Signed with the local debug key so it installs over the existing app without losing data.
@@ -49,6 +56,10 @@ dependencies {
 
     // Statement PDFs: unlock and read text on the phone.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    // Gmail: Google sign-in for a read-only token, and IMAP to read statement and alert emails.
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+    implementation("com.sun.mail:android-mail:1.6.7")
+    implementation("com.sun.mail:android-activation:1.6.7")
 
     testImplementation("junit:junit:4.13.2")
 }
