@@ -54,7 +54,10 @@ object StatementImport {
 
     /** Reads one statement PDF into the wallet. [received] is the email's date, for layouts that print no year. */
     /** [label]: where the PDF came from (sender and file name), so failures say which one. */
-    suspend fun import(context: Context, dao: WalletDao, bytes: ByteArray, profile: PdfProfile, received: LocalDate? = null, label: String = ""): Outcome {
+    /** [password]: one typed for this PDF only (tried first, not remembered). */
+    suspend fun import(
+        context: Context, dao: WalletDao, bytes: ByteArray, profile: PdfProfile, received: LocalDate? = null, label: String = "", password: String? = null,
+    ): Outcome {
         val from = if (label.isBlank()) "" else " ($label)"
         Pdf.init(context)
         val cards = dao.allCards()
@@ -62,9 +65,11 @@ object StatementImport {
         // The password that opened the last statement is tried first; it's usually the same every month.
         val prefs = context.getSharedPreferences("statements", Context.MODE_PRIVATE)
         val worked = prefs.getStringSet("passwords_that_worked", emptySet()).orEmpty()
-        val candidates = (worked.toList() + Passwords.candidates(profile, digits)).distinct()
+        val candidates = (listOfNotNull(password) + worked.toList() + Passwords.candidates(profile, digits)).distinct()
         val text = when (val r = Pdf.extract(bytes, candidates)) {
-            is Pdf.Result.Text -> r.text.also { if (r.password.isNotEmpty()) prefs.edit().putStringSet("passwords_that_worked", worked + r.password).apply() }
+            is Pdf.Result.Text -> r.text.also {
+                if (r.password.isNotEmpty() && r.password != password) prefs.edit().putStringSet("passwords_that_worked", worked + r.password).apply()
+            }
             Pdf.Result.Locked -> {
                 LockedPdfs.keep(context, bytes, label, received)
                 return done(dao, Outcome("Couldn't unlock the PDF$from. It's kept under More → Statements → Locked PDFs: type its password there once.", locked = true))

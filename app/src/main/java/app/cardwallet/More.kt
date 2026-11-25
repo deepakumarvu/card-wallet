@@ -454,6 +454,8 @@ private fun LockedPdfsScreen(dao: WalletDao, onClose: () -> Unit) {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(item.label.ifBlank { "Imported PDF" }, style = MaterialTheme.typography.titleSmall)
                             item.received?.let { Text("Received $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            if (item.oneOffPassword) Text("Password is in the Scapia app (each statement has its own).",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(password, { password = it }, placeholder = { Text("Password") }, singleLine = true, modifier = Modifier.weight(1f))
                                 Button(enabled = password.isNotBlank() && !busy, onClick = {

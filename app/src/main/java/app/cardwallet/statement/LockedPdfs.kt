@@ -12,7 +12,10 @@ import java.time.LocalDate
  * password once. From that password the app learns the bank's pattern and opens the rest.
  */
 object LockedPdfs {
-    data class Item(val id: String, val label: String, val received: LocalDate?)
+    data class Item(val id: String, val label: String, val received: LocalDate?) {
+        /** Scapia sets a new random password for every statement (shown in its app), so there's nothing to learn. */
+        val oneOffPassword get() = label.contains("scapia", ignoreCase = true)
+    }
 
     private fun dir(context: Context) = File(context.filesDir, "locked").apply { mkdirs() }
 
@@ -45,6 +48,12 @@ object LockedPdfs {
     suspend fun unlock(context: Context, dao: WalletDao, item: Item, password: String): String {
         val bytes = File(dir(context), "${item.id}.pdf").takeIf { it.exists() }?.readBytes() ?: return "That PDF is gone."
         if (Pdf.extract(bytes, listOf(password)) !is Pdf.Result.Text) return "That password didn't open it."
+
+        if (item.oneOffPassword) {
+            remove(context, item.id)
+            val outcome = StatementImport.import(context, dao, bytes, loadProfile(context), item.received, item.label, password)
+            return outcome.message
+        }
 
         var profile = loadProfile(context)
         val digits = dao.allCards().flatMap { listOf(it.last4) + it.oldLast4.split(',') }.map { it.trim() }.filter { it.length == 4 }
