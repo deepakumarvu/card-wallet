@@ -34,14 +34,18 @@ object SmsSpends {
                 spendWords.containsMatchIn(body) && !otpWords.containsMatchIn(body)
             ) needsYou else Result.Ignore
 
-        // The parser marks credit card spends as CREDIT.
-        if (tx.type != TransactionType.CREDIT) return Result.Ignore
+        val byLast4 = cards.find { tx.accountLast4 != null && it.last4 == tx.accountLast4 }
+        val card = when (tx.type) {
+            // The parser marks credit card spends as CREDIT.
+            TransactionType.CREDIT -> byLast4
+                ?: cards.filter { !it.isDebit && it.bank.equals(tx.bankName, ignoreCase = true) }.singleOrNull().takeIf { tx.accountLast4 == null }
+                ?: return needsYou
+            // Debit card spends come as EXPENSE; only log them when the last 4 digits match a card,
+            // so bank-account debits (UPI, transfers) stay out.
+            TransactionType.EXPENSE -> byLast4 ?: return Result.Ignore
+            else -> return Result.Ignore
+        }
         if (tx.currency != "INR") return needsYou
-
-        val sameBank = cards.filter { it.bank.equals(tx.bankName, ignoreCase = true) }
-        val card = cards.find { tx.accountLast4 != null && it.last4 == tx.accountLast4 }
-            ?: sameBank.singleOrNull().takeIf { tx.accountLast4 == null }
-            ?: return needsYou
 
         val spend = Spend(
             cardId = card.id,

@@ -1,6 +1,8 @@
 package app.cardwallet
 
 import android.content.Context
+import androidx.room3.AutoMigration
+import androidx.room3.ColumnInfo
 import androidx.room3.Dao
 import androidx.room3.Database
 import androidx.room3.Delete
@@ -26,14 +28,36 @@ data class Card(
     /** Bank name as the SMS parser reports it, e.g. "HDFC Bank". */
     val bank: String,
     val last4: String,
-    /** Cashback on spends no rule covers, e.g. 1.0 for 1%. */
+    /** Reward per ₹100 on spends no rule covers, in the card's unit: ₹ for cashback cards, points for points cards. */
     val baseRatePercent: Double,
+    /** Day of the month the statement is made (1-31); caps reset the day after. Null = calendar month. */
+    val statementDay: Int? = null,
+    /** What one reward unit is worth in ₹: 1.0 for cashback, 0.5 for a point worth 50 paise. */
+    @ColumnInfo(defaultValue = "1.0") val rupeesPerPoint: Double = 1.0,
+    /** Debit cards are tracked for spends but never suggested. */
+    @ColumnInfo(defaultValue = "0") val isDebit: Boolean = false,
+    /** Position in the wallet stack; lower is higher up. */
+    @ColumnInfo(defaultValue = "0") val sortOrder: Int = 0,
+    /** Show rewards as points and ₹ ("250 pts · ₹125"), for points you redeem more than one way. */
+    @ColumnInfo(defaultValue = "0") val showPoints: Boolean = false,
+    /** Card network shown on the face: Visa, Mastercard, RuPay, Amex; null = not set. */
+    val network: String? = null,
+    /** Index into the card colour list; null = the bank's colour. */
+    val colorIndex: Int? = null,
+    /** Only suggested when Best card is set to International (e.g. a 0% forex card). */
+    @ColumnInfo(defaultValue = "0") val internationalOnly: Boolean = false,
+    /** Rewards only on full blocks of this many ₹ (HDFC points: 200); null = every rupee. */
+    val earnBlockRupees: Int? = null,
 )
 
 /**
- * A higher cashback rate on some spends. It matches a spend when the merchant name contains
+ * A different reward rate on some spends. It matches a spend when the merchant name contains
  * one of [keywords] (comma-separated, e.g. "swiggy, zomato") or the merchant falls in [category].
- * [monthlyCapPaise] is the most cashback this rule pays in a calendar month; null means no cap.
+ * Amounts are in the card's unit ×100 (paise for cashback, 1/100 point for points cards).
+ * - [ratePercent]: reward per ₹100; 0 means the spend earns nothing, whatever the base rate.
+ * - [monthlyCapPaise]: most this rule pays per statement cycle; null = no fixed cap.
+ * - [minAmountPaise]: the rule only applies to spends of at least this much.
+ * - [capBaseMultiple]: cap = this × base reward earned on the card this cycle (Airtel Axis style).
  */
 @Entity(
     tableName = "rules",
@@ -48,6 +72,8 @@ data class Rule(
     val category: String?,
     val ratePercent: Double,
     val monthlyCapPaise: Long?,
+    val minAmountPaise: Long? = null,
+    val capBaseMultiple: Double? = null,
 )
 
 @Entity(
@@ -81,7 +107,7 @@ data class UnreadSms(
 
 @Dao
 interface WalletDao {
-    @Query("SELECT * FROM cards ORDER BY name") fun cards(): Flow<List<Card>>
+    @Query("SELECT * FROM cards ORDER BY sortOrder, name") fun cards(): Flow<List<Card>>
     @Query("SELECT * FROM rules ORDER BY ratePercent DESC") fun rules(): Flow<List<Rule>>
     @Query("SELECT * FROM spends ORDER BY timeMillis DESC") fun spends(): Flow<List<Spend>>
     @Query("SELECT * FROM merchant_categories ORDER BY keyword") fun merchants(): Flow<List<MerchantCategory>>
@@ -93,6 +119,9 @@ interface WalletDao {
     @Query("SELECT * FROM merchant_categories") suspend fun allMerchants(): List<MerchantCategory>
 
     @Upsert suspend fun save(card: Card): Long
+    @Upsert suspend fun saveCards(cards: List<Card>)
+    /** Where a new card goes: at the bottom of the stack. */
+    @Query("SELECT COALESCE(MAX(sortOrder), 0) + 1 FROM cards") suspend fun nextSortOrder(): Int
     @Upsert suspend fun save(rule: Rule): Long
     @Upsert suspend fun save(spend: Spend): Long
     @Upsert suspend fun save(merchant: MerchantCategory)
@@ -116,7 +145,11 @@ interface WalletDao {
 
 @Database(
     entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class],
-    version = 1,
+    version = 6,
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
+        AutoMigration(from = 5, to = 6),
+    ],
 )
 abstract class WalletDb : RoomDatabase() {
     abstract fun dao(): WalletDao

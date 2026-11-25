@@ -1,35 +1,58 @@
 package app.cardwallet
 
-import android.Manifest
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
+import kotlin.math.roundToInt
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card as Box3
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,28 +64,40 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.pennywiseai.parser.core.bank.BankParserFactory
-import kotlinx.coroutines.Dispatchers
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.text.DateFormat
-import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private val inr = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("en-IN"))
-fun rupees(paise: Long): String = inr.format(paise / 100.0)
-fun toPaise(text: String): Long? = text.replace(",", "").trim().toBigDecimalOrNull()?.movePointRight(2)?.toLong()
-private fun pct(rate: Double) = "${rate.toBigDecimal().stripTrailingZeros().toPlainString()}%"
-
-/** Indian banks the SMS reader knows, for the card's bank picker. */
-private val indianBanks by lazy {
-    BankParserFactory.getAllParsers().filter { it.getCurrency() == "INR" }.map { it.getBankName() }.distinct().sorted()
+private val shortDate = SimpleDateFormat("d MMM", Locale.forLanguageTag("en-IN"))
+private fun dayLabel(millis: Long): String {
+    val today = Calendar.getInstance()
+    val day = Calendar.getInstance().apply { timeInMillis = millis }
+    fun same(a: Calendar, b: Calendar) = a.get(Calendar.YEAR) == b.get(Calendar.YEAR) && a.get(Calendar.DAY_OF_YEAR) == b.get(Calendar.DAY_OF_YEAR)
+    if (same(today, day)) return "Today"
+    today.add(Calendar.DAY_OF_YEAR, -1)
+    if (same(today, day)) return "Yesterday"
+    return shortDate.format(Date(millis))
 }
+
+/** Value back as "5%"; for points cards the value of the points, e.g. 2.5 pts per ₹100 at ₹0.50 → "1.25%". */
+private fun valuePct(rate: Double, card: Card) = pct(Cashback.valuePercent(rate, card))
+
+/** Rule name, with the value % added only when the name doesn't already say it. */
+private fun ruleTitle(r: Rule, card: Card) = valuePct(r.ratePercent, card).let { if (r.label.contains(it)) r.label else "${r.label} · $it" }
+
+/** What a cap means, for rules whose cap follows base earnings. */
+private fun capNote(r: Rule) = r.capBaseMultiple?.let { "cap = ${it.toBigDecimal().stripTrailingZeros().toPlainString()}× base earned this cycle" }
+
+private val quickPicks = listOf("Zomato", "Swiggy", "Amazon", "Flipkart", "Blinkit", "Zepto", "Myntra", "Uber")
+
+private val screenPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 24.dp, bottom = 100.dp)
 
 // ---------- Best card ----------
 
@@ -74,42 +109,163 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
     val merchants by dao.merchants().collectAsState(emptyList())
     var merchant by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("1000") }
+    var international by remember { mutableStateOf(false) }
+    var searchOpen by remember { mutableStateOf(false) }
+    val paise = toPaise(amount) ?: 0
 
-    Column(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Where are you paying?", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(merchant, { merchant = it }, label = { Text("Merchant, e.g. Zomato") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(
-            amount, { amount = it }, label = { Text("Amount (₹)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-        )
-        val paise = toPaise(amount) ?: 0
-        if (cards.isEmpty()) {
-            Text("Add your cards on the Cards tab first.")
-            return@Column
+    LazyColumn(modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        item {
+            Text("Where are you\npaying?", style = MaterialTheme.typography.headlineMedium)
         }
-        val picks = Cashback.rank(paise, merchant, cards, rules, Cashback.thisMonth(spends), merchants)
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(picks, key = { it.card.id }) { p ->
-                val first = p == picks.first() && p.cashbackPaise > 0
-                Box3(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                (if (first) "★ " else "") + p.card.name, Modifier.weight(1f),
-                                fontWeight = if (first) FontWeight.Bold else FontWeight.Normal,
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.weight(1.5f)) {
+                    OutlinedTextField(merchant, { merchant = it; searchOpen = true }, placeholder = { Text("Search merchant") }, singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) searchOpen = true })
+                    val suggestions = Cashback.merchantSuggestions(merchant, merchants, rules, spends)
+                        .filterNot { it.name.equals(merchant.trim(), ignoreCase = true) }
+                    DropdownMenu(
+                        expanded = searchOpen && suggestions.isNotEmpty(),
+                        onDismissRequest = { searchOpen = false },
+                        properties = PopupProperties(focusable = false),
+                        modifier = Modifier.heightIn(max = 320.dp),
+                    ) {
+                        suggestions.forEach { s ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(s.name)
+                                        if (s.categories.isNotEmpty()) Text(s.categories.sorted().joinToString(", "),
+                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                },
+                                onClick = { merchant = s.name; searchOpen = false },
                             )
-                            Text(rupees(p.cashbackPaise) + " back", fontWeight = FontWeight.Bold)
-                        }
-                        val why = p.rule?.let { r ->
-                            "${r.label}" + (p.capLeftPaise?.let { " · ${rupees(it)} cap left this month" } ?: "")
-                        } ?: "Base rate ${pct(p.card.baseRatePercent)}"
-                        Text(why, style = MaterialTheme.typography.bodySmall)
-                        p.cappedOut?.let {
-                            Text("${it.label}: cap used up this month", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
+                OutlinedTextField(amount, { amount = it }, prefix = { Text("₹") }, singleLine = true,
+                    shape = RoundedCornerShape(16.dp), modifier = Modifier.weight(1f),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
             }
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    FilterChip(selected = international, onClick = { international = !international }, label = { Text("International") },
+                        shape = RoundedCornerShape(50))
+                }
+                items(quickPicks) { m ->
+                    FilterChip(selected = merchant.equals(m, ignoreCase = true), onClick = { merchant = m; searchOpen = false }, label = { Text(m) },
+                        shape = RoundedCornerShape(50))
+                }
+            }
+        }
+        if (cards.isEmpty()) {
+            item { EmptyState("No cards yet", "Add your cards on the Cards tab, and this shows which one pays most back.") }
+            return@LazyColumn
+        }
+        val picks = Cashback.rank(paise, merchant, cards, rules, spends, merchants, international = international)
+        if (picks.isEmpty()) {
+            item { EmptyState("Only debit cards", "Debit cards are tracked but never suggested. Add a credit card to see picks.") }
+            return@LazyColumn
+        }
+        val best = picks.first()
+        item {
+            SectionLabel(if (merchant.isBlank()) "Best for any spend" else "Best at ${merchant.trim()}")
+            Spacer(Modifier.height(10.dp))
+            CardFace(best.card, badge = "★ BEST") {
+                Column(Modifier.align(Alignment.BottomEnd).padding(20.dp), horizontalAlignment = Alignment.End) {
+                    if (best.card.showPoints && best.card.rupeesPerPoint != 1.0) {
+                        Text(reward(best.rewardUnits, best.card), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                        Text("worth ${rupees(best.cashbackPaise)}", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
+                    } else {
+                        Text(rupees(best.cashbackPaise), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
+                        Text("back", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+        item {
+            Panel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val title = best.rule?.label ?: "Base rate"
+                        val rate = valuePct(best.rule?.ratePercent ?: best.card.baseRatePercent, best.card)
+                        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        if (!title.contains(rate)) Pill(rate)
+                    }
+                    val rule = best.rule
+                    if (rule != null && best.capUnits != null) {
+                        CapBar(best.capUsedUnits, best.capUnits, shortDate.format(Date(Cashback.nextCycleStart(best.card.statementDay))), best.card)
+                        capNote(rule)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                    }
+                    best.cappedOut?.let { CappedOutNote(it, best.card) }
+                }
+            }
+        }
+        // A card that would beat the best pick once its base-tied cap has room.
+        picks.filter { it.unlock != null && it.unlock.valuePaise > best.cashbackPaise }.forEach { p ->
+            item(key = "unlock-${p.card.id}") { UnlockNote(p) }
+        }
+        if (picks.size > 1) {
+            item { SectionLabel("Your other cards") }
+            items(picks.drop(1), key = { it.card.id }) { p ->
+                Panel {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CardSwatch(p.card)
+                            Spacer(Modifier.size(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(p.card.name, style = MaterialTheme.typography.titleMedium)
+                                Text(p.rule?.let { ruleTitle(it, p.card) } ?: "Base rate ${valuePct(p.card.baseRatePercent, p.card)}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(backText(p.cashbackPaise, p.rewardUnits, p.card), style = MaterialTheme.typography.titleMedium)
+                        }
+                        p.cappedOut?.let { CappedOutNote(it, p.card) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** "Airtel Axis could pay ₹206: Airtel recharges 25%, once you've put ₹10,300 more of other spends on it this cycle." */
+@Composable
+private fun UnlockNote(p: Cashback.Pick) {
+    val u = p.unlock ?: return
+    Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(20.dp), modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            CardSwatch(p.card)
+            Spacer(Modifier.size(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("${p.card.name} could pay ${rupees(u.valuePaise)}", style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("${u.rule.label}, once you've put ${rupees(u.moreSpendPaise)} more of other spends on it this cycle " +
+                    "(before the statement). Today it pays ${rupees(p.cashbackPaise)}.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+        }
+    }
+}
+
+@Composable
+private fun CappedOutNote(rule: Rule, card: Card) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.size(6.dp))
+        Text("${rule.label}: cap used up until ${shortDate.format(Date(Cashback.nextCycleStart(card.statementDay)))}",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+    }
+}
+
+@Composable
+private fun EmptyState(title: String, body: String) {
+    Panel {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(body, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -126,45 +282,95 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
     val scope = rememberCoroutineScope()
     var editing by remember { mutableStateOf<Spend?>(null) }
     var fromSms by remember { mutableStateOf<UnreadSms?>(null) }
-    val cardName = cards.associate { it.id to it.name }
-    val dateFormat = remember { DateFormat.getDateInstance(DateFormat.MEDIUM) }
+    val cardById = cards.associateBy { it.id }
 
-    LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("This month", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                Button(enabled = cards.isNotEmpty(), onClick = {
-                    editing = Spend(cardId = cards.first().id, amountPaise = 0, merchant = "", timeMillis = System.currentTimeMillis())
-                }) { Text("Add spend") }
-            }
-        }
-        if (unread.isNotEmpty()) item {
-            Box3(Modifier.fillMaxWidth().clickable { fromSms = unread.first() }) {
-                Text(
-                    "${unread.size} bank message(s) couldn't be logged on their own. Tap to go through them.",
-                    Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error,
-                )
-            }
-        }
-        val month = Cashback.thisMonth(spends)
-        items(cards, key = { "total-${it.id}" }) { card ->
-            val total = Cashback.replayMonth(card, rules, month, merchants).second
-            Row {
-                Text(card.name, Modifier.weight(1f))
-                Text("${rupees(total.spentPaise)} spent · ${rupees(total.cashbackPaise)} back")
-            }
-        }
-        item { HorizontalDivider(); Text("All spends", style = MaterialTheme.typography.titleMedium) }
-        items(spends, key = { it.id }) { s ->
-            Row(Modifier.fillMaxWidth().clickable { editing = s }.padding(vertical = 4.dp)) {
-                Column(Modifier.weight(1f)) {
-                    Text(s.merchant)
-                    Text("${cardName[s.cardId] ?: "?"} · ${dateFormat.format(Date(s.timeMillis))}" + if (s.smsKey != null) " · from SMS" else "",
-                        style = MaterialTheme.typography.bodySmall)
+    // Each card counts its own cycle.
+    val cycleSpends = cards.flatMap { c -> spends.filter { it.cardId == c.id && it.timeMillis >= Cashback.cycleStart(c.statementDay) } }
+    val totals = cards.associateWith { Cashback.replayCycle(it, rules, spends, merchants).second }
+    val spentAll = totals.values.sumOf { it.spentPaise }
+    val backAll = totals.values.sumOf { it.cashbackPaise }
+
+    Box(modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            item { Text("This cycle", style = MaterialTheme.typography.headlineMedium) }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    StatTile("Spent", rupees(spentAll), MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
+                    StatTile("Cashback", rupees(backAll), MaterialTheme.colorScheme.primary, Modifier.weight(1f))
                 }
-                Text(rupees(s.amountPaise))
+            }
+            if (unread.isNotEmpty()) item {
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth().clickable { fromSms = unread.first() }) {
+                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Email, null)
+                        Spacer(Modifier.size(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("${unread.size} bank message${if (unread.size > 1) "s" else ""} to check", style = MaterialTheme.typography.titleMedium)
+                            Text("Couldn't log these on their own. Tap to go through them.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+            }
+            if (cards.isNotEmpty()) item {
+                Panel {
+                    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                        SectionLabel("By card")
+                        val max = totals.values.maxOf { it.spentPaise }.coerceAtLeast(1)
+                        cards.forEach { c ->
+                            val t = totals.getValue(c)
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Row(verticalAlignment = Alignment.Bottom) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(c.name, style = MaterialTheme.typography.titleSmall)
+                                        Text("since ${shortDate.format(Date(Cashback.cycleStart(c.statementDay)))}",
+                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text(rupees(t.spentPaise), style = MaterialTheme.typography.titleSmall)
+                                        Text("${backText(t.cashbackPaise, t.rewardUnits, c)} back", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                ValueBar(t.spentPaise.toFloat() / max, cardGradient(c))
+                            }
+                        }
+                    }
+                }
+            }
+            if (cycleSpends.isNotEmpty()) item { CategoryPanel(cycleSpends, merchants) }
+            item { SectionLabel("Recent spends") }
+            if (spends.isEmpty()) item { EmptyState("Nothing logged yet", "Add a spend, or turn on SMS reading under More.") }
+            spends.groupBy { dayLabel(it.timeMillis) }.forEach { (day, daySpends) ->
+                item(key = "day-$day") {
+                    Text(day, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                item(key = "group-$day") {
+                    Panel {
+                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            daySpends.forEach { s ->
+                                val card = cardById[s.cardId]
+                                Row(Modifier.fillMaxWidth().clickable { editing = s }, verticalAlignment = Alignment.CenterVertically) {
+                                    card?.let { CardSwatch(it, 32.dp) }
+                                    Spacer(Modifier.size(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(s.merchant, style = MaterialTheme.typography.bodyLarge, maxLines = 1)
+                                        Text((card?.name ?: "?") + if (s.smsKey != null) " · from SMS" else "",
+                                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                    Text(rupees(s.amountPaise), style = MaterialTheme.typography.titleSmall)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+        if (cards.isNotEmpty()) ExtendedFloatingActionButton(
+            onClick = { editing = Spend(cardId = cards.first().id, amountPaise = 0, merchant = "", timeMillis = System.currentTimeMillis()) },
+            icon = { Icon(Icons.Default.Add, null) }, text = { Text("Add spend") },
+            containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+        )
     }
 
     editing?.let { s ->
@@ -185,32 +391,44 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
 }
 
 @Composable
-private fun SpendDialog(
-    cards: List<Card>, spend: Spend, smsBody: String?,
-    onSave: (Spend) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit, deleteLabel: String = "Delete",
-) {
-    var cardId by remember { mutableStateOf(spend.cardId) }
-    var amount by remember { mutableStateOf(if (spend.amountPaise == 0L) "" else (spend.amountPaise / 100.0).toString()) }
-    var merchant by remember { mutableStateOf(spend.merchant) }
-    val paise = toPaise(amount)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (spend.id == 0L) "Add spend" else "Edit spend") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                smsBody?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                Picker("Card", cards.find { it.id == cardId }?.name ?: "Pick a card", cards.map { it.name }) { cardId = cards[it].id }
-                OutlinedTextField(amount, { amount = it }, label = { Text("Amount (₹)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedTextField(merchant, { merchant = it }, label = { Text("Merchant") }, singleLine = true)
+private fun StatTile(label: String, value: String, valueColor: Color, modifier: Modifier) {
+    Surface(modifier, color = MaterialTheme.colorScheme.surfaceContainer, shape = RoundedCornerShape(20.dp)) {
+        Column(Modifier.padding(16.dp)) {
+            SectionLabel(label)
+            Spacer(Modifier.height(6.dp))
+            Text(value, style = MaterialTheme.typography.headlineSmall, color = valueColor, maxLines = 1)
+        }
+    }
+}
+
+/** Donut of this cycle's spend by category, with a legend that carries names and amounts. */
+@Composable
+private fun CategoryPanel(cycleSpends: List<Spend>, merchants: List<MerchantCategory>) {
+    val allCategories = merchants.map { it.category }.distinct()
+    val byCategory = cycleSpends.groupBy { Cashback.mainCategory(it.merchant, merchants) }
+        .mapValues { (_, list) -> list.sumOf { it.amountPaise } }
+        .entries.sortedByDescending { it.value }
+    val total = byCategory.sumOf { it.value }
+    Panel {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            SectionLabel("By category")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Donut(byCategory.map { categoryColor(it.key, allCategories) to it.value }, size = 120.dp)
+                Spacer(Modifier.size(20.dp))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    byCategory.forEach { (category, paise) ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Dot(categoryColor(category, allCategories))
+                            Spacer(Modifier.size(8.dp))
+                            Text(category, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                            Text("${rupees(paise)} · ${paise * 100 / total}%", style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
-        },
-        confirmButton = {
-            TextButton(enabled = paise != null && paise > 0 && merchant.isNotBlank() && cards.any { it.id == cardId },
-                onClick = { onSave(spend.copy(cardId = cardId, amountPaise = paise!!, merchant = merchant.trim())) }) { Text("Save") }
-        },
-        dismissButton = { onDelete?.let { TextButton(onClick = it) { Text(deleteLabel) } } },
-    )
+        }
+    }
 }
 
 // ---------- Cards ----------
@@ -219,47 +437,54 @@ private fun SpendDialog(
 fun CardsScreen(dao: WalletDao, modifier: Modifier) {
     val cards by dao.cards().collectAsState(emptyList())
     val rules by dao.rules().collectAsState(emptyList())
+    val spends by dao.spends().collectAsState(emptyList())
     val merchants by dao.merchants().collectAsState(emptyList())
     val scope = rememberCoroutineScope()
     var editCard by remember { mutableStateOf<Card?>(null) }
     var editRule by remember { mutableStateOf<Rule?>(null) }
     var starter by remember { mutableStateOf(false) }
+    var openId by remember { mutableStateOf<Long?>(null) }
 
-    LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    LazyColumn(modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { starter = true }) { Text("Add from list") }
-                OutlinedButton(onClick = { editCard = Card(name = "", bank = "", last4 = "", baseRatePercent = 1.0) }) { Text("Add other card") }
+            Text("Your cards", style = MaterialTheme.typography.headlineMedium)
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                FilledTonalButton(onClick = { starter = true }) { Icon(Icons.Default.Add, null); Spacer(Modifier.size(6.dp)); Text("My cards list") }
+                OutlinedButton(onClick = { editCard = Card(name = "", bank = "", last4 = "", baseRatePercent = 1.0) }) { Text("Other card") }
             }
-            Text("Starter rates can be out of date. Check your card's current terms.", style = MaterialTheme.typography.bodySmall)
         }
-        items(cards, key = { it.id }) { card ->
-            Box3(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Row(Modifier.fillMaxWidth().clickable { editCard = card }) {
-                        Column(Modifier.weight(1f)) {
-                            Text(card.name, fontWeight = FontWeight.Bold)
-                            Text("${card.bank} •••• ${card.last4} · base ${pct(card.baseRatePercent)}", style = MaterialTheme.typography.bodySmall)
-                        }
+        if (cards.isEmpty()) item { EmptyState("Add your first card", "Pick a popular card to get its cashback rules, or add any card and set the rules yourself.") }
+        if (cards.isNotEmpty()) item(key = "stack") {
+            CardStack(cards, openId,
+                onToggle = { openId = if (openId == it.id) null else it.id },
+                onReorder = { reordered -> scope.launch { dao.saveCards(reordered.mapIndexed { i, c -> c.copy(sortOrder = i) }) } },
+            ) { card ->
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        FilledTonalButton(onClick = { editCard = card }) { Text("Edit card") }
+                        OutlinedButton(onClick = { openId = null }) { Text("Close") }
                     }
-                    rules.filter { it.cardId == card.id }.forEach { r ->
-                        Row(Modifier.fillMaxWidth().clickable { editRule = r }.padding(top = 6.dp)) {
-                            Text("${r.label} · ${pct(r.ratePercent)}" + (r.monthlyCapPaise?.let { " · cap ${rupees(it)}/month" } ?: ""),
-                                Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                    TextButton(onClick = {
-                        editRule = Rule(cardId = card.id, label = "", keywords = "", category = null, ratePercent = 5.0, monthlyCapPaise = null)
-                    }) { Text("Add rule") }
+                    CardDetails(card, rules, spends, merchants,
+                        onEditRule = { editRule = it },
+                        onAddRule = { editRule = Rule(cardId = card.id, label = "", keywords = "", category = null, ratePercent = 5.0, monthlyCapPaise = null) })
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Text("Tap a card to open it. Long-press and drag to move it.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (cards.isNotEmpty()) item {
+            Text("Starter rates can be out of date. Check your card's current terms.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 
-    if (starter) StarterDialog(onPick = { t, last4 -> scope.launch { Starter.addCard(dao, t, last4) }; starter = false }, onDismiss = { starter = false })
+    if (starter) StarterDialog(onPick = { t, last4, day -> scope.launch { Starter.addCard(dao, t, last4, day) }; starter = false }, onDismiss = { starter = false })
     editCard?.let { c ->
-        CardDialog(c, onSave = { scope.launch { dao.save(it) }; editCard = null },
-            onDelete = if (c.id != 0L) ({ scope.launch { dao.delete(c) }; editCard = null }) else null,
+        CardDialog(c,
+            onSave = { scope.launch { dao.save(if (it.id == 0L) it.copy(sortOrder = dao.nextSortOrder()) else it) }; editCard = null },
+            onDelete = if (c.id != 0L) ({ scope.launch { dao.delete(c) }; editCard = null; openId = null }) else null,
             onDismiss = { editCard = null })
     }
     editRule?.let { r ->
@@ -269,194 +494,130 @@ fun CardsScreen(dao: WalletDao, modifier: Modifier) {
     }
 }
 
-@Composable
-private fun StarterDialog(onPick: (Starter.CardTemplate, String) -> Unit, onDismiss: () -> Unit) {
-    var chosen by remember { mutableStateOf<Starter.CardTemplate?>(null) }
-    var last4 by remember { mutableStateOf("") }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(chosen?.name ?: "Pick your card") },
-        text = {
-            val c = chosen
-            if (c == null) Column {
-                Starter.cards.forEach { t -> Text(t.name, Modifier.fillMaxWidth().clickable { chosen = t }.padding(vertical = 10.dp)) }
-            } else OutlinedTextField(last4, { if (it.length <= 4) last4 = it }, label = { Text("Last 4 digits") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-        },
-        confirmButton = {
-            chosen?.let { t -> TextButton(enabled = last4.length == 4, onClick = { onPick(t, last4) }) { Text("Add") } }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
+private fun cardBadge(card: Card) = when {
+    card.isDebit -> "DEBIT"
+    card.internationalOnly -> "${valuePct(card.baseRatePercent, card)} · INTL"
+    else -> "${valuePct(card.baseRatePercent, card)} BASE"
 }
 
+/**
+ * Cards overlapped like a wallet: each shows its top strip, the last one shows in full.
+ * Tapping a card opens it in place: it grows to full size with [details] under it and the
+ * cards below slide down. Long-press then drag moves a card (while none is open);
+ * [onReorder] gets the new order on release.
+ */
 @Composable
-private fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
-    var name by remember { mutableStateOf(card.name) }
-    var bank by remember { mutableStateOf(card.bank) }
-    var last4 by remember { mutableStateOf(card.last4) }
-    var base by remember { mutableStateOf(card.baseRatePercent.toString()) }
-    var confirmDelete by remember { mutableStateOf(false) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (card.id == 0L) "Add card" else "Edit card") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(name, { name = it }, label = { Text("Name, e.g. Swiggy HDFC") }, singleLine = true)
-                Picker("Bank", bank.ifEmpty { "Pick the bank" }, indianBanks) { bank = indianBanks[it] }
-                OutlinedTextField(last4, { if (it.length <= 4) last4 = it }, label = { Text("Last 4 digits") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-                OutlinedTextField(base, { base = it }, label = { Text("Cashback on everything else (%)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                if (confirmDelete) Text("Delete this card with all its rules and spends? Tap Delete again.", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        confirmButton = {
-            TextButton(enabled = name.isNotBlank() && bank.isNotBlank() && last4.length == 4 && base.toDoubleOrNull() != null,
-                onClick = { onSave(card.copy(name = name.trim(), bank = bank, last4 = last4, baseRatePercent = base.toDouble())) }) { Text("Save") }
-        },
-        dismissButton = {
-            onDelete?.let { TextButton(onClick = { if (confirmDelete) it() else confirmDelete = true }) { Text("Delete") } }
-        },
-    )
-}
-
-@Composable
-private fun RuleDialog(rule: Rule, categories: List<String>, onSave: (Rule) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit) {
-    var label by remember { mutableStateOf(rule.label) }
-    var keywords by remember { mutableStateOf(rule.keywords) }
-    var category by remember { mutableStateOf(rule.category) }
-    var rate by remember { mutableStateOf(rule.ratePercent.toString()) }
-    var cap by remember { mutableStateOf(rule.monthlyCapPaise?.let { (it / 100).toString() } ?: "") }
-    val capPaise = if (cap.isBlank()) null else toPaise(cap)
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (rule.id == 0L) "Add rule" else "Edit rule") },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(label, { label = it }, label = { Text("Name, e.g. Swiggy 10%") }, singleLine = true)
-                OutlinedTextField(keywords, { keywords = it }, label = { Text("Merchants, e.g. swiggy, zomato") }, singleLine = true)
-                Picker("Or a category", category ?: "None", listOf("None") + categories) { category = if (it == 0) null else categories[it - 1] }
-                OutlinedTextField(rate, { rate = it }, label = { Text("Cashback (%)") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
-                OutlinedTextField(cap, { cap = it }, label = { Text("Monthly cap (₹), blank = none") }, singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-            }
-        },
-        confirmButton = {
-            TextButton(
-                enabled = label.isNotBlank() && rate.toDoubleOrNull() != null && (keywords.isNotBlank() || category != null) && (cap.isBlank() || capPaise != null),
-                onClick = { onSave(rule.copy(label = label.trim(), keywords = keywords.trim(), category = category, ratePercent = rate.toDouble(), monthlyCapPaise = capPaise)) },
-            ) { Text("Save") }
-        },
-        dismissButton = { onDelete?.let { TextButton(onClick = it) { Text("Delete") } } },
-    )
-}
-
-// ---------- More: SMS, backup, merchant categories ----------
-
-@Composable
-fun MoreScreen(dao: WalletDao, modifier: Modifier) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val merchants by dao.merchants().collectAsState(emptyList())
-    var restoreFrom by remember { mutableStateOf<android.net.Uri?>(null) }
-    var keyword by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
-    fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_LONG).show()
-
-    val smsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
-        if (granted[Manifest.permission.READ_SMS] == true) scope.launch {
-            val added = withContext(Dispatchers.IO) { SmsSpends.importInbox(context) }
-            toast("Read bank SMS: $added new")
-        } else toast("SMS permission not given")
-    }
-    val backup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
-        uri ?: return@rememberLauncherForActivityResult
-        scope.launch {
-            withContext(Dispatchers.IO) {
-                val content = WalletDb.get(context).snapshot()
-                context.contentResolver.openOutputStream(uri)!!.use { Backup.write(content, it) }
-            }
-            toast("Backup saved")
-        }
-    }
-    val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { restoreFrom = it }
-
-    LazyColumn(modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Text("Bank SMS", style = MaterialTheme.typography.titleLarge)
-            Text("Reads card spends from bank messages on this phone. Nothing is sent anywhere: the app has no internet access.",
-                style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { smsPermission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)) }) {
-                Text("Read SMS from last month on")
-            }
-        }
-        item {
-            HorizontalDivider()
-            Text("Backup", style = MaterialTheme.typography.titleLarge)
-            Text("A zip of CSV files, saved where you choose.", style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { backup.launch("card-wallet-backup.zip") }) { Text("Back up") }
-                OutlinedButton(onClick = { restore.launch(arrayOf("application/zip")) }) { Text("Restore") }
-            }
-        }
-        item {
-            HorizontalDivider()
-            Text("Merchant categories", style = MaterialTheme.typography.titleLarge)
-            Text("Merchant names starting a word with the keyword fall in the category. Rules can use categories.",
-                style = MaterialTheme.typography.bodySmall)
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(keyword, { keyword = it }, label = { Text("Keyword") }, singleLine = true, modifier = Modifier.weight(1f))
-                OutlinedTextField(category, { category = it }, label = { Text("Category") }, singleLine = true, modifier = Modifier.weight(1f))
-                Button(enabled = keyword.isNotBlank() && category.isNotBlank(), onClick = {
-                    scope.launch { dao.save(MerchantCategory(keyword.trim().lowercase(), category.trim())) }
-                    keyword = ""
-                }) { Text("Add") }
-            }
-        }
-        items(merchants, key = { "${it.keyword}|${it.category}" }) { m ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${m.keyword} → ${m.category}", Modifier.weight(1f))
-                IconButton(onClick = { scope.launch { dao.delete(m) } }) { Icon(Icons.Default.Delete, contentDescription = "Delete") }
-            }
-        }
-    }
-
-    restoreFrom?.let { uri ->
-        AlertDialog(
-            onDismissRequest = { restoreFrom = null },
-            title = { Text("Restore backup?") },
-            text = { Text("This replaces all cards, rules, spends and categories on this phone with the backup.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    restoreFrom = null
-                    scope.launch {
-                        val result = runCatching {
-                            withContext(Dispatchers.IO) {
-                                val content = context.contentResolver.openInputStream(uri)!!.use { Backup.read(it) }
-                                WalletDb.get(context).replaceAll(content)
+private fun CardStack(
+    cards: List<Card>,
+    openId: Long?,
+    onToggle: (Card) -> Unit,
+    onReorder: (List<Card>) -> Unit,
+    details: @Composable (Card) -> Unit,
+) {
+    var order by remember(cards) { mutableStateOf(cards) }
+    var draggingId by remember { mutableStateOf<Long?>(null) }
+    var dragY by remember { mutableFloatStateOf(0f) }
+    val peek = 96.dp
+    val peekPx = with(LocalDensity.current) { peek.toPx() }
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val cardHeight = maxWidth / 1.586f
+        Column(Modifier.fillMaxWidth()) {
+            order.forEachIndexed { index, card ->
+                key(card.id) {
+                    val open = card.id == openId
+                    val dragged = draggingId == card.id
+                    // Layout height of this card's slot; the card itself always draws full size and
+                    // the next card covers all but the top strip.
+                    val slot by animateDpAsState(
+                        when { open -> cardHeight + 12.dp; index == order.lastIndex -> cardHeight; else -> peek }, label = "slot")
+                    Column(
+                        Modifier
+                            .zIndex(if (dragged) 100f else index.toFloat())
+                            .offset { IntOffset(0, if (dragged) dragY.roundToInt() else 0) },
+                    ) {
+                        Box(Modifier.fillMaxWidth().height(slot)) {
+                            CardFace(
+                                card,
+                                Modifier
+                                    .wrapContentHeight(Alignment.Top, unbounded = true)
+                                    .graphicsLayer { if (dragged) { scaleX = 1.03f; scaleY = 1.03f } }
+                                    .shadow(if (dragged) 16.dp else 6.dp, RoundedCornerShape(22.dp))
+                                    .then(if (openId != null) Modifier else Modifier.pointerInput(card.id) {
+                                        detectDragGesturesAfterLongPress(
+                                            onDragStart = { draggingId = card.id; dragY = 0f },
+                                            onDrag = { change, amount ->
+                                                change.consume()
+                                                dragY += amount.y
+                                                val from = order.indexOfFirst { it.id == card.id }
+                                                val to = (from + (dragY / peekPx).roundToInt()).coerceIn(0, order.lastIndex)
+                                                if (to != from) {
+                                                    order = order.toMutableList().apply { add(to, removeAt(from)) }
+                                                    dragY -= (to - from) * peekPx
+                                                }
+                                            },
+                                            onDragEnd = { draggingId = null; dragY = 0f; if (order != cards) onReorder(order) },
+                                            onDragCancel = { draggingId = null; dragY = 0f; order = cards },
+                                        )
+                                    })
+                                    .clickable { onToggle(card) },
+                                badge = cardBadge(card),
+                            ) {
+                                if (open && !card.isDebit) Text(card.statementDay?.let { "Statement on day $it" } ?: "Statement day not set",
+                                    color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp,
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp))
                             }
                         }
-                        toast(result.fold({ "Restored" }, { "Couldn't restore: ${it.message}" }))
+                        AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                            Box(Modifier.padding(bottom = 16.dp)) { details(card) }
+                        }
                     }
-                }) { Text("Replace") }
-            },
-            dismissButton = { TextButton(onClick = { restoreFrom = null }) { Text("Cancel") } },
-        )
+                }
+            }
+        }
     }
 }
 
-/** A button that opens a list to pick from. */
+/** An open card's rules with their cap bars, or a note for debit cards. */
 @Composable
-private fun Picker(label: String, current: String, options: List<String>, onPick: (Int) -> Unit) {
-    var open by remember { mutableStateOf(false) }
-    Column {
-        Text(label, style = MaterialTheme.typography.labelMedium)
-        Box {
-            OutlinedButton(onClick = { open = true }, modifier = Modifier.fillMaxWidth()) { Text(current) }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                options.forEachIndexed { i, o -> DropdownMenuItem(text = { Text(o) }, onClick = { onPick(i); open = false }) }
+private fun CardDetails(
+    card: Card, rules: List<Rule>, spends: List<Spend>, merchants: List<MerchantCategory>,
+    onEditRule: (Rule) -> Unit, onAddRule: () -> Unit,
+) {
+    if (card.isDebit) {
+        Text("Debit card: spends are tracked, but it's never suggested on Best card.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+    val earned = Cashback.replayCycle(card, rules, spends, merchants).first
+    val resets = shortDate.format(Date(Cashback.nextCycleStart(card.statementDay)))
+    Panel {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            if (card.last4.isBlank()) Text("Add the last 4 digits (Edit card) so bank SMS land on this card.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+            if (card.rupeesPerPoint != 1.0) Text(
+                "Points card: ${pct(card.baseRatePercent).removeSuffix("%")} pts per ₹100, 1 pt = ₹${card.rupeesPerPoint.toBigDecimal().stripTrailingZeros().toPlainString()}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            rules.filter { it.cardId == card.id }.forEach { r ->
+                Column(Modifier.fillMaxWidth().clickable { onEditRule(r) }, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(r.label, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                        val v = valuePct(r.ratePercent, card)
+                        if (r.ratePercent == 0.0) Pill("Earns nothing", MaterialTheme.colorScheme.surfaceContainerHighest, MaterialTheme.colorScheme.onSurfaceVariant)
+                        else if (!r.label.contains(v)) Pill(v)
+                    }
+                    val notes = listOfNotNull(r.minAmountPaise?.let { "on spends of ${rupees(it)}+" }, capNote(r))
+                    if (notes.isNotEmpty()) Text(notes.joinToString(" · "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    val cap = Cashback.capFor(r, earned.base)
+                    if (r.ratePercent > 0) {
+                        if (cap != null) CapBar(earned.byRule[r.id] ?: 0, cap, resets, card)
+                        else Text("No cap", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            if (card.statementDay == null) Text("Set the statement day (Edit card) so caps reset on the right day.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = onAddRule, contentPadding = PaddingValues(0.dp)) {
+                Icon(Icons.Default.Add, null); Spacer(Modifier.size(4.dp)); Text("Add rule")
             }
         }
     }

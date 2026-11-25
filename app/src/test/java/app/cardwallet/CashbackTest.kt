@@ -3,6 +3,7 @@ package app.cardwallet
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.util.Calendar
 
 class CashbackTest {
     private val swiggyHdfc = Card(1, "Swiggy HDFC", "HDFC Bank", "1111", 1.0)
@@ -16,8 +17,15 @@ class CashbackTest {
 
     private val table = listOf(MerchantCategory("zomato", "Online"), MerchantCategory("amazon", "Online"))
 
-    private fun rank(merchant: String, rupees: Long, spends: List<Spend> = emptyList()) =
-        Cashback.rank(rupees * 100, merchant, cards, rules, spends, table)
+    /** Midnight (phone time zone) on the given date. */
+    private fun day(year: Int, month: Int, day: Int, hour: Int = 0): Long =
+        Calendar.getInstance().apply { clear(); set(year, month - 1, day, hour, 0) }.timeInMillis
+
+    private val now = day(2026, 11, 20, hour = 12)
+    private val earlier = day(2026, 11, 10)
+
+    private fun rank(merchant: String, rupees: Long, spends: List<Spend> = emptyList(), cards: List<Card> = this.cards) =
+        Cashback.rank(rupees * 100, merchant, cards, rules, spends, table, now)
 
     @Test
     fun `picks the card with the most cashback for a merchant`() {
@@ -46,8 +54,8 @@ class CashbackTest {
 
     @Test
     fun `used-up cap moves the pick to the next best card`() {
-        // ₹15,000 at Swiggy this month already paid the full ₹1,500 cap on Swiggy 10%.
-        val spent = listOf(Spend(1, 1, 15_000_00, "SWIGGY", 1000))
+        // ₹15,000 at Swiggy this cycle already paid the full ₹1,500 cap on Swiggy 10%.
+        val spent = listOf(Spend(1, 1, 15_000_00, "SWIGGY", earlier))
         val picks = rank("SWIGGY FOOD", 1000, spent)
 
         val hdfc = picks.single { it.card == swiggyHdfc }
@@ -58,25 +66,187 @@ class CashbackTest {
 
     @Test
     fun `partly used cap pays only what is left`() {
-        // ₹14,000 at Swiggy used ₹1,400 of the ₹1,500 cap: a ₹1,000 spend gets ₹100, not ₹100 + more.
-        val spent = listOf(Spend(1, 1, 14_000_00, "SWIGGY", 1000))
+        // ₹14,000 at Swiggy used ₹1,400 of the ₹1,500 cap: a ₹2,000 spend gets ₹100, not ₹200.
+        val spent = listOf(Spend(1, 1, 14_000_00, "SWIGGY", earlier))
         val hdfc = rank("SWIGGY", 2000, spent).single { it.card == swiggyHdfc }
         assertEquals(100_00L, hdfc.cashbackPaise)
-        assertEquals(100_00L, hdfc.capLeftPaise)
+        assertEquals(100_00L, hdfc.capUnits!! - hdfc.capUsedUnits)
     }
 
     @Test
-    fun `month replay gives each spend the rule that paid best at the time`() {
+    fun `cycle replay gives each spend the rule that paid best at the time`() {
         val spends = listOf(
-            Spend(1, 1, 10_000_00, "SWIGGY", 1), // 10% → ₹1,000
-            Spend(2, 1, 10_000_00, "SWIGGY", 2), // ₹500 cap left on 10%; Online 5% doesn't match Swiggy; 1% base = ₹100 → ₹500
-            Spend(3, 1, 2_000_00, "AMAZON", 3),  // Online 5% → ₹100
-            Spend(4, 2, 1_000_00, "ZOMATO", 4),  // other card, not counted
+            Spend(1, 1, 10_000_00, "SWIGGY", earlier),     // 10% → ₹1,000
+            Spend(2, 1, 10_000_00, "SWIGGY", earlier + 1), // ₹500 cap left on 10%; 1% base = ₹100 → ₹500
+            Spend(3, 1, 2_000_00, "AMAZON", earlier + 2),  // Online 5% → ₹100
+            Spend(4, 2, 1_000_00, "ZOMATO", earlier + 3),  // other card, not counted
         )
-        val (earned, total) = Cashback.replayMonth(swiggyHdfc, rules, spends, table)
-        assertEquals(1500_00L, earned[swiggy10.id])
-        assertEquals(100_00L, earned[online5.id])
+        val (earned, total) = Cashback.replayCycle(swiggyHdfc, rules, spends, table, now)
+        assertEquals(1500_00L, earned.byRule[swiggy10.id])
+        assertEquals(100_00L, earned.byRule[online5.id])
         assertEquals(22_000_00L, total.spentPaise)
         assertEquals(1600_00L, total.cashbackPaise)
+    }
+
+    @Test
+    fun `cycle starts the day after the statement day`() {
+        // Each case: statement day, today → first day of the current cycle.
+        val cases = listOf(
+            Triple(14, day(2026, 11, 20, 12), day(2026, 11, 15)),
+            Triple(14, day(2026, 11, 14, 23), day(2026, 10, 15)), // statement day itself is still the old cycle
+            Triple(14, day(2026, 11, 15), day(2026, 11, 15)),
+            Triple(31, day(2026, 11, 20), day(2026, 11, 1)),      // Oct 31 statement
+            Triple(31, day(2026, 12, 31), day(2026, 12, 1)),      // Nov has 30 days: statement on the 30th
+            Triple(30, day(2027, 3, 5), day(2027, 3, 1)),         // Feb 2027 has 28 days
+            Triple(5, day(2027, 1, 3), day(2026, 12, 6)),         // across a year
+            Triple(null, day(2026, 11, 20, 12), day(2026, 11, 1)), // not set: calendar month
+        )
+        for ((statementDay, today, expected) in cases) {
+            assertEquals("day $statementDay on $today", expected, Cashback.cycleStart(statementDay, today))
+        }
+    }
+
+    @Test
+    fun `cap resets the day after the statement day`() {
+        // Statement on the 14th. ₹15,000 at Swiggy on the 14th used the old cycle's cap;
+        // on the 20th the new cycle (from the 15th) pays the full 10% again.
+        val hdfc14 = swiggyHdfc.copy(statementDay = 14)
+        val onStatementDay = listOf(Spend(1, 1, 15_000_00, "SWIGGY", day(2026, 11, 14, 18)))
+        val pick = rank("SWIGGY", 1000, onStatementDay, listOf(hdfc14)).single()
+        assertEquals(100_00L, pick.cashbackPaise)
+        assertEquals(1500_00L, pick.capUnits!! - pick.capUsedUnits)
+
+        // The same spend on the 15th counts toward this cycle's cap.
+        val afterStatement = listOf(Spend(1, 1, 15_000_00, "SWIGGY", day(2026, 11, 15, 9)))
+        assertEquals(10_00L, rank("SWIGGY", 1000, afterStatement, listOf(hdfc14)).single().cashbackPaise)
+    }
+
+    @Test
+    fun `chart puts each spend in one category`() {
+        val table = listOf(
+            MerchantCategory("zomato", "Online"), MerchantCategory("zomato", "Dining"),
+            MerchantCategory("indian oil", "Fuel"), MerchantCategory("oil", "Groceries"),
+        )
+        // merchant → category: ties go alphabetically, the longer keyword wins, no match is Other.
+        val cases = mapOf("ZOMATO LTD" to "Dining", "INDIAN OIL CORP" to "Fuel", "DMART" to "Other")
+        for ((merchant, category) in cases) assertEquals(merchant, category, Cashback.mainCategory(merchant, table))
+    }
+
+    @Test
+    fun `points are compared by their rupee value`() {
+        // Regalia Gold: 2.5 points per ₹100 at ₹0.50 = 1.25%, beats a 1% cashback card.
+        val regalia = Card(5, "Regalia Gold", "HDFC Bank", "5555", 2.5, rupeesPerPoint = 0.5)
+        val plain = Card(6, "Plain 1%", "HDFC Bank", "6666", 1.0)
+        val best = Cashback.rank(10_000_00, "DMART", listOf(plain, regalia), emptyList(), emptyList(), table, now).first()
+        assertEquals(regalia, best.card)
+        assertEquals("250 points", 250_00L, best.rewardUnits)
+        assertEquals("worth ₹125", 125_00L, best.cashbackPaise)
+    }
+
+    @Test
+    fun `rule needs the minimum order`() {
+        val ornge = Card(7, "Ornge", "HDFC Bank", "7777", 1.0)
+        val swiggy5 = Rule(70, 7, "Swiggy 5%", "swiggy", null, 5.0, null, minAmountPaise = 100_00)
+        fun back(rupees: Long) = Cashback.rank(rupees * 100, "SWIGGY", listOf(ornge), listOf(swiggy5), emptyList(), table, now).single().cashbackPaise
+        assertEquals("₹99 is under the minimum: 1% base", 99L, back(99))
+        assertEquals("₹100 gets 5%", 5_00L, back(100))
+    }
+
+    @Test
+    fun `a 0 rule means the spend earns nothing, even with a base rate`() {
+        val scapia = Card(8, "Scapia", "Federal Bank", "8888", 10.0, rupeesPerPoint = 0.2)
+        val fuel = Rule(80, 8, "Fuel", "", "Fuel", 0.0, null)
+        val fuelTable = table + MerchantCategory("indian oil", "Fuel")
+        val pick = Cashback.rank(2000_00, "INDIAN OIL", listOf(scapia), listOf(fuel), emptyList(), fuelTable, now).single()
+        assertEquals(0L, pick.cashbackPaise)
+        assertEquals(fuel, pick.rule)
+        assertEquals("other spends still earn 2%", 40_00L,
+            Cashback.rank(2000_00, "DMART", listOf(scapia), listOf(fuel), emptyList(), fuelTable, now).single().cashbackPaise)
+    }
+
+    @Test
+    fun `Airtel cap follows the base cashback earned this cycle`() {
+        val airtel = Card(9, "Airtel Axis", "Axis Bank", "9999", 1.0)
+        val recharge = Rule(90, 9, "Airtel recharges 25%", "airtel", null, 25.0, null, capBaseMultiple = 2.0)
+        // ₹20,000 of other spends this cycle → ₹200 base → recharges capped at ₹400.
+        val other = listOf(Spend(1, 9, 20_000_00, "DMART", earlier))
+        val pick = Cashback.rank(3000_00, "AIRTEL", listOf(airtel), listOf(recharge), other, table, now).single()
+        assertEquals("25% of ₹3,000 is ₹750, capped at ₹400", 400_00L, pick.cashbackPaise)
+        assertEquals(400_00L, pick.capUnits)
+        // With no other spends there is no base yet, so only the 1% base applies.
+        assertEquals(30_00L, Cashback.rank(3000_00, "AIRTEL", listOf(airtel), listOf(recharge), emptyList(), table, now).single().cashbackPaise)
+    }
+
+    @Test
+    fun `debit cards are never suggested`() {
+        val debit = Card(10, "HDFC Debit", "HDFC Bank", "1010", 0.0, isDebit = true)
+        assertEquals(listOf(swiggyHdfc, axisAce).toSet(), rank("DMART", 1000, cards = cards + debit).map { it.card }.toSet())
+    }
+
+    @Test
+    fun `points and rupees shown only for cards set to show points`() {
+        val regalia = Card(5, "Regalia Gold", "HDFC Bank", "5555", 2.5, rupeesPerPoint = 0.5, showPoints = true)
+        val neo = Card(6, "Neo", "Axis Bank", "6666", 0.5, rupeesPerPoint = 0.2)
+        assertEquals("250 pts · ₹125", backText(125_00, 250_00, regalia))
+        assertEquals("₹10", backText(10_00, 50_00, neo))
+        assertEquals("₹50", backText(50_00, 50_00, swiggyHdfc))
+    }
+
+    @Test
+    fun `international-only card is suggested only for international spends`() {
+        val scapia = Card(11, "Scapia", "Federal Bank", "1111", 10.0, rupeesPerPoint = 0.2, internationalOnly = true)
+        val withScapia = cards + scapia
+        assertEquals(false, rank("DMART", 1000, cards = withScapia).any { it.card == scapia })
+        val abroad = Cashback.rank(1000_00, "DMART", withScapia, rules, emptyList(), table, now, international = true)
+        assertEquals(scapia, abroad.first().card)
+    }
+
+    @Test
+    fun `merchant search offers known names, rule merchants and past spends`() {
+        val spends = listOf(Spend(1, 1, 100_00, "SWIGGY FOOD", earlier), Spend(2, 1, 100_00, "Zomato Ltd", earlier))
+        val names = { q: String -> Cashback.merchantSuggestions(q, table, rules, spends).map { it.name } }
+        // Starts-with first, then contains; case doesn't matter; no duplicates.
+        assertEquals(listOf("Zomato", "Zomato Ltd"), names("zom"))
+        assertEquals(listOf("Swiggy", "SWIGGY FOOD"), names("SWIG"))
+        assertEquals(listOf("Ola"), names("ola"))
+        // Blank lists the known keywords only.
+        assertEquals(listOf("Amazon", "Ola", "Swiggy", "Zomato"), names(""))
+        assertEquals(setOf("Online"), Cashback.merchantSuggestions("zomato", table, rules, spends).first().categories)
+    }
+
+    @Test
+    fun `Airtel bill paid early counts the whole cycle's base`() {
+        val airtel = Card(9, "Airtel Axis", "Axis Bank", "9999", 1.0)
+        val recharge = Rule(90, 9, "Airtel recharges 25%", "airtel", null, 25.0, null, capBaseMultiple = 2.0)
+        // Bill on the 16th, ₹20,000 of other spends on the 18th: the bill still earns 25% (cap ₹400).
+        val spends = listOf(Spend(1, 9, 825_00, "AIRTEL", day(2026, 11, 16)), Spend(2, 9, 20_000_00, "DMART", day(2026, 11, 18)))
+        val total = Cashback.replayCycle(airtel, listOf(recharge), spends, table, now).second
+        assertEquals("₹206.25 on the bill + ₹200 base", 406_25L, total.cashbackPaise)
+    }
+
+    @Test
+    fun `Best card says how much spend unlocks a base-tied rate`() {
+        val airtel = Card(9, "Airtel Axis", "Axis Bank", "9999", 1.0)
+        val recharge = Rule(90, 9, "Airtel recharges 25%", "airtel", null, 25.0, null, capBaseMultiple = 2.0)
+        val pick = Cashback.rank(825_00, "AIRTEL", listOf(airtel), listOf(recharge), emptyList(), table, now).single()
+        assertEquals("today: 1% base only", 8_25L, pick.cashbackPaise)
+        val unlock = pick.unlock!!
+        assertEquals("25% of ₹825", 206_25L, unlock.valuePaise)
+        assertEquals("₹103.13 base needed → ₹10,313 at 1%", 10_313_00L, unlock.moreSpendPaise)
+        // Once enough base is in, no hint and the full rate applies.
+        val after = Cashback.rank(825_00, "AIRTEL", listOf(airtel), listOf(recharge), listOf(Spend(1, 9, 11_000_00, "DMART", earlier)), table, now).single()
+        assertEquals(206_25L, after.cashbackPaise)
+        assertEquals(null, after.unlock)
+    }
+
+    @Test
+    fun `Regalia earns only per full 200 rupees`() {
+        val regalia = Card(5, "Regalia Gold", "HDFC Bank", "5555", 2.5, rupeesPerPoint = 0.5, earnBlockRupees = 200)
+        // Each case: ₹ spent → points earned (5 per full ₹200).
+        val cases = mapOf(199L to 0L, 200L to 5L, 1150L to 25L, 1200L to 30L)
+        for ((rupees, points) in cases) {
+            val pick = Cashback.rank(rupees * 100, "DMART", listOf(regalia), emptyList(), emptyList(), table, now).single()
+            assertEquals("₹$rupees", points * 100, pick.rewardUnits)
+        }
     }
 }

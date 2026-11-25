@@ -4,7 +4,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
@@ -17,8 +16,6 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -37,14 +34,21 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("app", MODE_PRIVATE)
         setContent {
             LaunchedEffect(Unit) {
-                if (!prefs.getBoolean("seeded", false)) {
+                if (!prefs.getBoolean("seeded_v2", false)) {
                     Starter.merchants.forEach { dao.save(it) }
-                    prefs.edit { putBoolean("seeded", true) }
+                    prefs.edit { putBoolean("seeded_v2", true) }
+                }
+                // Bump the key when templates gain new settings, so existing cards pick them up once.
+                if (!prefs.getBoolean("looks_filled_v3", false)) {
+                    Starter.fillLooks(dao)
+                    prefs.edit { putBoolean("looks_filled_v3", true) }
+                }
+                if (!prefs.getBoolean("recolours_v1", false)) {
+                    Starter.applyRecolours(dao)
+                    prefs.edit { putBoolean("recolours_v1", true) }
                 }
             }
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                App(dao)
-            }
+            WalletTheme { App(dao) }
         }
     }
 }
@@ -61,7 +65,7 @@ private fun App(dao: WalletDao) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     Scaffold(
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Tab.entries.forEachIndexed { i, t ->
                     NavigationBarItem(
                         selected = tab == i,

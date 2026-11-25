@@ -39,4 +39,13 @@ class SmsSpendsTest {
         assertEquals(Result.Ignore, SmsSpends.read(otp, "AX-AXISBK-S", 1, listOf(axis)))
         assertEquals(Result.Ignore, SmsSpends.read(axisSms, "+919999999999", 1, listOf(axis)))
     }
+
+    @Test
+    fun `debit card spend is logged only when the last 4 digits match`() {
+        val debitSms = "Spent Rs.450 From HDFC Bank Card x5678 At ZOMATO On 2026-11-20:12:30:00 Bal Rs.10000 Not You? Call 18002586161"
+        val debit = Card(2, "HDFC Debit", "HDFC Bank", "5678", 0.0, isDebit = true)
+        val logged = SmsSpends.read(debitSms, "AD-HDFCBK-S", 42, listOf(debit))
+        assertEquals(debit.id, (logged as Result.CardSpend).spend.cardId)
+        assertEquals(Result.Ignore, SmsSpends.read(debitSms, "AD-HDFCBK-S", 42, listOf(debit.copy(last4 = "0000"))))
+    }
 }

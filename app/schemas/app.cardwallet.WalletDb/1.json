@@ -2,11 +2,11 @@
   "formatVersion": 1,
   "database": {
     "version": 1,
-    "identityHash": "35e6c987fbfce7eaac0e8d5e49f34402",
+    "identityHash": "465ad2f812409fbdd8a44b98c5cf607e",
     "entities": [
       {
         "tableName": "cards",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `bank` TEXT NOT NULL, `last4` TEXT NOT NULL, `baseRatePercent` REAL NOT NULL)",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `bank` TEXT NOT NULL, `last4` TEXT NOT NULL, `baseRatePercent` REAL NOT NULL, `statementDay` INTEGER)",
         "fields": [
           {
             "fieldPath": "id",
@@ -37,6 +37,11 @@
             "columnName": "baseRatePercent",
             "affinity": "REAL",
             "notNull": true
+          },
+          {
+            "fieldPath": "statementDay",
+            "columnName": "statementDay",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -283,7 +288,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '35e6c987fbfce7eaac0e8d5e49f34402')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '465ad2f812409fbdd8a44b98c5cf607e')"
     ]
   }
 }

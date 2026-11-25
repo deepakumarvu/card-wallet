@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Two stacked cards: blue behind, mint in front with a chip and a number line. 108dp canvas, art inside the 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#2160D6"
+        android:pathData="M39,32 h36 a5,5 0 0 1 5,5 v20 a5,5 0 0 1 -5,5 h-36 a5,5 0 0 1 -5,-5 v-20 a5,5 0 0 1 5,-5 z" />
+    <path android:fillColor="#3DDC97"
+        android:pathData="M33,42 h40 a5,5 0 0 1 5,5 v24 a5,5 0 0 1 -5,5 h-40 a5,5 0 0 1 -5,-5 v-24 a5,5 0 0 1 5,-5 z" />
+    <path android:fillColor="#0E0F13" android:fillAlpha="0.55"
+        android:pathData="M35.5,51 h7 a1.5,1.5 0 0 1 1.5,1.5 v5 a1.5,1.5 0 0 1 -1.5,1.5 h-7 a1.5,1.5 0 0 1 -1.5,-1.5 v-5 a1.5,1.5 0 0 1 1.5,-1.5 z" />
+    <path android:fillColor="#0E0F13" android:fillAlpha="0.55"
+        android:pathData="M35.5,65 h19 a1.5,1.5 0 0 1 0,3 h-19 a1.5,1.5 0 0 1 0,-3 z" />
+</vector>
