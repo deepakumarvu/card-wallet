@@ -87,6 +87,12 @@ adb install -r --user 0 app/build/outputs/apk/release/app-release.apk
 | `app/schemas/` | Database schema per version, for automatic upgrades |
 | `parser-core/` | Bank SMS parsers from PennyWise |
 
+## Statement PDFs
+
+More → Statements → **Import PDF** reads a card statement on the phone: it finds the card by its last 4 digits, sets the card's statement day, and adds purchases that SMS missed (bill payments, refunds, fees and cashback lines are skipped; a purchase already logged within 3 days is not added twice). Locked PDFs are opened by trying the usual Indian bank password patterns built from your name, date of birth, PAN and mobile (More → Statements → PDF passwords), kept only in the app.
+
+The statement reader (`app/.../statement/`: `Parser.kt`, `Pdf.kt`, `Passwords.kt`, `TxnKind.kt`) comes from [CardKeep](https://github.com/santdas36/CardKeep) (GPL-3.0). It knows HDFC, ICICI, Axis, SBI Card, Kotak, IDFC FIRST, Yes Bank and Amex layouts, with a generic reader for others.
+
 ## Licence
 
-AGPL-3.0, because `parser-core` comes from PennyWise under AGPL-3.0. See [LICENSE](LICENSE).
+AGPL-3.0, because `parser-core` comes from PennyWise under AGPL-3.0. The statement reader from CardKeep is GPL-3.0, which may be combined with AGPL-3.0 code (GPLv3 section 13). See [LICENSE](LICENSE).

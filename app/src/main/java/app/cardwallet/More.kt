@@ -108,6 +108,20 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     }
     val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { restoreFrom = it }
     var showLog by remember { mutableStateOf(false) }
+    // Name / date of birth / PAN / mobile for guessing statement PDF passwords. App-private, never backed up.
+    val prefs = remember { context.getSharedPreferences("statements", android.content.Context.MODE_PRIVATE) }
+    var profile by remember { mutableStateOf(app.cardwallet.statement.PdfProfile.fromJson(prefs.getString("profile", null))) }
+    var editProfile by remember { mutableStateOf(false) }
+    val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                val bytes = context.contentResolver.openInputStream(uri)!!.use { it.readBytes() }
+                app.cardwallet.statement.StatementImport.import(context, dao, bytes, profile)
+            }
+            toast(outcome.message)
+        }
+    }
     val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
         uri ?: return@rememberLauncherForActivityResult
         scope.launch {
@@ -129,6 +143,24 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { smsPermission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)) }) {
                         Text("Read SMS from last month on")
+                    }
+                }
+            }
+        }
+        item {
+            Panel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PanelTitle(Icons.Default.List, "Statements")
+                    Text("Import a card statement PDF: sets the card's statement day and adds purchases that SMS missed. " +
+                        "Read on this phone; the PDF isn't saved.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (profile.name.isBlank() || profile.dob == null) "Add your name and date of birth so locked PDFs open."
+                        else "Unlocks PDFs using ${profile.name.split(" ").first()}'s details.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (profile.dob == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Button(onClick = { importPdf.launch(arrayOf("application/pdf")) }) { Text("Import PDF") }
+                        OutlinedButton(onClick = { editProfile = true }) { Text("PDF passwords") }
                     }
                 }
             }
@@ -197,6 +229,11 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     }
 
     if (showLog) ActivityLog(dao, onClose = { showLog = false })
+    if (editProfile) ProfileForm(profile, onDismiss = { editProfile = false }) {
+        profile = it
+        prefs.edit().putString("profile", it.toJson()).apply()
+        editProfile = false
+    }
 
     restoreFrom?.let { uri ->
         AlertDialog(
@@ -251,6 +288,37 @@ private fun ActivityLog(dao: WalletDao, onClose: () -> Unit) {
             TextButton(onClick = { if (confirmClear) { scope.launch { dao.clearLogs() }; confirmClear = false } else confirmClear = true }) {
                 Text(if (confirmClear) "Tap again to clear" else "Clear log", color = MaterialTheme.colorScheme.error)
             }
+        },
+    )
+}
+
+/** The details Indian banks build statement passwords from. Kept only on this phone. */
+@Composable
+private fun ProfileForm(profile: app.cardwallet.statement.PdfProfile, onDismiss: () -> Unit, onSave: (app.cardwallet.statement.PdfProfile) -> Unit) {
+    val dobFormat = java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy")
+    var name by remember { mutableStateOf(profile.name) }
+    var dob by remember { mutableStateOf(profile.dob?.format(dobFormat).orEmpty()) }
+    var pan by remember { mutableStateOf(profile.pan) }
+    var mobile by remember { mutableStateOf(profile.mobile) }
+    val dobDate = runCatching { java.time.LocalDate.parse(dob.trim(), dobFormat) }.getOrNull()
+    FormDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("PDF passwords") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Banks lock statements with passwords made from these (e.g. first 4 letters of your name + birth day and month). " +
+                    "The app tries the usual patterns. Stored only in this app on this phone.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(name, { name = it }, label = { Text("Name as on the card") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(dob, { dob = it }, label = { Text("Date of birth (DD-MM-YYYY)") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    isError = dob.isNotBlank() && dobDate == null)
+                OutlinedTextField(pan, { pan = it.uppercase() }, label = { Text("PAN (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(mobile, { mobile = it.filter(Char::isDigit) }, label = { Text("Mobile (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = {
+            Button(enabled = dob.isBlank() || dobDate != null, modifier = Modifier.fillMaxWidth(),
+                onClick = { onSave(profile.copy(name = name.trim(), dob = dobDate, pan = pan.trim(), mobile = mobile)) }) { Text("Save") }
         },
     )
 }

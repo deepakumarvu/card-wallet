@@ -25,7 +25,7 @@ android {
         // Signed with the local debug key so it installs over the existing app without losing data.
         release {
             isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
     }
@@ -46,6 +46,9 @@ dependencies {
     implementation("androidx.room3:room3-runtime:3.0.3")
     implementation("androidx.sqlite:sqlite-framework:2.7.1")
     ksp("androidx.room3:room3-compiler:3.0.3")
+
+    // Statement PDFs: unlock and read text on the phone.
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     testImplementation("junit:junit:4.13.2")
 }
