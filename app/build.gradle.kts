@@ -58,6 +58,7 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     // Gmail: Google sign-in for a read-only token; mail is read through the Gmail API.
     implementation("com.google.android.gms:play-services-auth:21.2.0")
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     testImplementation("junit:junit:4.13.2")
 }

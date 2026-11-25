@@ -625,11 +625,12 @@ private fun CardStack(
                                     })
                                     .clickable { onToggle(card) },
                                 status = cardBadge(card),
-                            ) {
-                                if (open && !card.isDebit) Text(card.statementDay?.let { "Statement on day $it" } ?: "Statement day not set",
-                                    color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp,
-                                    modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp))
-                            }
+                                // In the figure row, so it never sits on top of the network mark.
+                                figures = if (card.isDebit) emptyList() else listOf(
+                                    "Statement" to (card.statementDay?.let { "Day $it" } ?: "Not set"),
+                                    "Cycle since" to shortDate.format(Date(Cashback.cycleStart(card))),
+                                ),
+                            )
                         }
                         AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                             Box(Modifier.padding(bottom = 16.dp)) { details(card) }

@@ -121,6 +121,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     var gmail by remember { mutableStateOf(gmailPrefs.getString("email", "").orEmpty()) }
     var syncing by remember { mutableStateOf(false) }
     var syncStatus by remember { mutableStateOf("") }
+    val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     fun runSync(token: String, email: String) {
         syncing = true
         scope.launch {
@@ -142,6 +143,10 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
             dao.log("Gmail sign-in: got access for $email, syncing")
             gmail = email
             gmailPrefs.edit().putString("email", email).apply()
+            app.cardwallet.statement.GmailWorker.schedule(context)
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) notifyPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             runSync(token, email)
         }
     }
@@ -211,7 +216,12 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                     PanelTitle(Icons.Default.Email, "Gmail")
                     Text("Reads statement PDFs and card alert emails from your Gmail, read-only. Mail goes straight from Gmail to this phone; nothing is sent anywhere else.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (gmail.isNotBlank()) Text("Connected: $gmail", style = MaterialTheme.typography.bodySmall)
+                    if (gmail.isNotBlank()) {
+                        Text("Connected: $gmail", style = MaterialTheme.typography.bodySmall)
+                        val last = gmailPrefs.getLong("synced_up_to", 0)
+                        Text("Syncs by itself once a day" + if (last > 0) " · last ${java.text.SimpleDateFormat("d MMM, h:mm a", java.util.Locale.forLanguageTag("en-IN")).format(java.util.Date(last))}" else "",
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(enabled = !syncing, onClick = { connectAndSync() }) {
                             Text(when { syncing -> "Syncing…"; gmail.isBlank() -> "Connect Gmail"; else -> "Sync now" })

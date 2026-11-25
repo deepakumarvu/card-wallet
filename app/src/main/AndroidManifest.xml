@@ -7,6 +7,8 @@
 
     <!-- Internet is used only to read Gmail (statements and card alerts), read-only. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only to say when Google wants you to sign in again for the daily Gmail sync. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="Card Wallet"

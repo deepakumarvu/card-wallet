@@ -9,6 +9,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.Date
 import kotlin.math.abs
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Reads statement PDFs and card alert emails from Gmail, read-only, with a Google token
@@ -65,7 +66,13 @@ object GmailSync {
     private const val FIRST_ALERT_DAYS = 7L
 
     /** [progress] gets short status lines while the sync runs ("Statement 3 of 12…"). */
-    suspend fun sync(context: Context, dao: WalletDao, token: String, profile: PdfProfile, progress: (String) -> Unit = {}): String {
+    /** One sync at a time: the daily one and a tap on Sync now never overlap. */
+    private val running = kotlinx.coroutines.sync.Mutex()
+
+    suspend fun sync(context: Context, dao: WalletDao, token: String, profile: PdfProfile, progress: (String) -> Unit = {}): String =
+        running.withLock { syncOnce(context, dao, token, profile, progress) }
+
+    private suspend fun syncOnce(context: Context, dao: WalletDao, token: String, profile: PdfProfile, progress: (String) -> Unit): String {
         val prefs = context.getSharedPreferences("gmail", Context.MODE_PRIVATE)
         val cards = dao.allCards()
         val banks = cards.filter { !it.isDebit }.map { it.bank }.distinct()

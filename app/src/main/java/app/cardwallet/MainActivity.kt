@@ -33,6 +33,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val dao = WalletDb.get(this).dao()
         val prefs = getSharedPreferences("app", MODE_PRIVATE)
+        // Keep the daily Gmail sync scheduled once Gmail is connected (an existing schedule is left as is).
+        if (!getSharedPreferences("gmail", MODE_PRIVATE).getString("email", null).isNullOrBlank()) {
+            app.cardwallet.statement.GmailWorker.schedule(this)
+        }
         setContent {
             LaunchedEffect(Unit) {
                 if (!prefs.getBoolean("seeded_v2", false)) {
