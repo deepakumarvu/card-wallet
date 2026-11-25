@@ -111,6 +111,18 @@ data class UnreadSms(
     val smsKey: String,
 )
 
+/**
+ * A message shape you marked "Not a spend": the bank sender (e.g. AXISBK) and the text with every
+ * number masked. New messages of the same shape from that bank are ignored.
+ */
+@Entity(tableName = "ignored_shapes", indices = [Index(value = ["senderKey", "shape"], unique = true)])
+data class IgnoredShape(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val senderKey: String,
+    val shape: String,
+    val createdMillis: Long,
+)
+
 /** One line in the on-phone activity log, for debugging later. */
 @Entity(tableName = "activity_log")
 data class LogEntry(
@@ -132,6 +144,11 @@ interface WalletDao {
     @Query("SELECT * FROM spends") suspend fun allSpends(): List<Spend>
     @Query("SELECT * FROM merchant_categories") suspend fun allMerchants(): List<MerchantCategory>
     @Query("SELECT * FROM unread_sms") suspend fun allUnread(): List<UnreadSms>
+
+    @Query("SELECT * FROM ignored_shapes ORDER BY createdMillis DESC") fun ignoredShapes(): Flow<List<IgnoredShape>>
+    @Query("SELECT * FROM ignored_shapes") suspend fun allIgnoredShapes(): List<IgnoredShape>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) suspend fun insertIgnoredShape(shape: IgnoredShape): Long
+    @Delete suspend fun delete(shape: IgnoredShape)
 
     @Insert suspend fun insertLog(entry: LogEntry)
     @Query("SELECT * FROM activity_log ORDER BY id DESC") fun logs(): Flow<List<LogEntry>>
@@ -166,11 +183,11 @@ interface WalletDao {
 }
 
 @Database(
-    entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class, LogEntry::class],
-    version = 8,
+    entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class, LogEntry::class, IgnoredShape::class],
+    version = 9,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
-        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8),
+        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9),
     ],
 )
 abstract class WalletDb : RoomDatabase() {

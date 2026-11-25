@@ -56,10 +56,8 @@ dependencies {
 
     // Statement PDFs: unlock and read text on the phone.
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
-    // Gmail: Google sign-in for a read-only token, and IMAP to read statement and alert emails.
+    // Gmail: Google sign-in for a read-only token; mail is read through the Gmail API.
     implementation("com.google.android.gms:play-services-auth:21.2.0")
-    implementation("com.sun.mail:android-mail:1.6.7")
-    implementation("com.sun.mail:android-activation:1.6.7")
 
     testImplementation("junit:junit:4.13.2")
 }

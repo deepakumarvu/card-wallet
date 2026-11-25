@@ -84,6 +84,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val merchants by dao.merchants().collectAsState(emptyList())
+    val ignoredShapes by dao.ignoredShapes().collectAsState(emptyList())
     var restoreFrom by remember { mutableStateOf<android.net.Uri?>(null) }
     var keyword by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("") }
@@ -117,40 +118,53 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     val gmailPrefs = remember { context.getSharedPreferences("gmail", android.content.Context.MODE_PRIVATE) }
     var gmail by remember { mutableStateOf(gmailPrefs.getString("email", "").orEmpty()) }
     var syncing by remember { mutableStateOf(false) }
+    var syncStatus by remember { mutableStateOf("") }
     fun runSync(token: String, email: String) {
         syncing = true
         scope.launch {
-            val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, email, token, profile) } }
+            val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, token, profile) { syncStatus = it } } }
             syncing = false
             toast(result.getOrElse { "Gmail sync failed: ${it.message}" })
             result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it") }
         }
     }
+    // Every sign-in step goes to the activity log, so a failed sign-in can be traced.
+    fun signInNote(text: String) { toast(text); scope.launch { dao.log("Gmail sign-in: $text") } }
     fun gotToken(result: com.google.android.gms.auth.api.identity.AuthorizationResult) {
-        val token = result.accessToken ?: return toast("Google didn't give access to Gmail.")
-        @Suppress("DEPRECATION")
-        val email = result.toGoogleSignInAccount()?.email ?: gmail
-        if (email.isBlank()) return toast("Couldn't tell which Gmail account; sign in again.")
-        gmail = email
-        gmailPrefs.edit().putString("email", email).apply()
-        runSync(token, email)
+        val token = result.accessToken ?: return signInNote("Google didn't give access to Gmail.")
+        scope.launch {
+            // Which account the token is for: ask Gmail itself.
+            val email = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.emailFor(token) } }
+                .getOrElse { return@launch signInNote("couldn't read the account address: ${it.message}") }
+            dao.log("Gmail sign-in: got access for $email, syncing")
+            gmail = email
+            gmailPrefs.edit().putString("email", email).apply()
+            runSync(token, email)
+        }
     }
     val consent = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
         runCatching { com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(context).getAuthorizationResultFromIntent(res.data) }
             .onSuccess { gotToken(it) }
-            .onFailure { toast("Google sign-in cancelled.") }
+            .onFailure { signInNote("cancelled or refused (result ${res.resultCode}): ${it.message}") }
     }
     fun connectAndSync() {
+        scope.launch { dao.log("Gmail sign-in: started") }
         val request = com.google.android.gms.auth.api.identity.AuthorizationRequest.builder()
             .setRequestedScopes(listOf(com.google.android.gms.common.api.Scope(app.cardwallet.statement.GmailSync.SCOPE), com.google.android.gms.common.api.Scope("email")))
             .build()
         com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(context).authorize(request)
             .addOnSuccessListener { r ->
                 val pending = r.pendingIntent
-                if (r.hasResolution() && pending != null) consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build())
+                if (r.hasResolution() && pending != null) {
+                    scope.launch { dao.log("Gmail sign-in: asking you to choose an account and allow access") }
+                    consent.launch(androidx.activity.result.IntentSenderRequest.Builder(pending.intentSender).build())
+                }
                 else gotToken(r)
             }
-            .addOnFailureListener { toast("Google sign-in failed: ${it.message}") }
+            .addOnFailureListener { e ->
+                val code = (e as? com.google.android.gms.common.api.ApiException)?.statusCode
+                signInNote("failed${code?.let { " (code $it${if (it == 10) ": app not registered, check package and SHA-1 in Google Cloud" else ""})" }.orEmpty()}: ${e.message}")
+            }
     }
     val importPdf = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri ?: return@rememberLauncherForActivityResult
@@ -179,7 +193,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
             Panel {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     PanelTitle(Icons.Default.Email, "Bank SMS")
-                    Text("Reads card spends from bank messages on this phone. Nothing is sent anywhere: the app has no internet access.",
+                    Text("Reads card spends from bank messages on this phone. Messages never leave the phone.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { smsPermission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)) }) {
                         Text("Read SMS from last month on")
@@ -197,6 +211,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                     Button(enabled = !syncing, onClick = { connectAndSync() }) {
                         Text(when { syncing -> "Syncing…"; gmail.isBlank() -> "Connect Gmail"; else -> "Sync now" })
                     }
+                    if (syncing && syncStatus.isNotBlank()) Text(syncStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
             }
         }
@@ -227,6 +242,26 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = { backup.launch("card-wallet-backup.zip") }) { Text("Back up") }
                         OutlinedButton(onClick = { restore.launch(arrayOf("application/zip")) }) { Text("Restore") }
+                    }
+                }
+            }
+        }
+        if (ignoredShapes.isNotEmpty()) item {
+            Panel {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PanelTitle(Icons.Default.Close, "Ignored message types")
+                    Text("Bank messages like these are skipped, because you marked one \"Not a spend\". Numbers are shown as #.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ignoredShapes.forEach { s ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(s.senderKey, style = MaterialTheme.typography.titleSmall)
+                                Text(s.shape, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                            }
+                            IconButton(onClick = { scope.launch { dao.delete(s); dao.log("Stopped ignoring ${s.senderKey} messages like \"${s.shape.take(80)}…\"") } }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Stop ignoring")
+                            }
+                        }
                     }
                 }
             }

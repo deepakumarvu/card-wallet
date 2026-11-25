@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -103,12 +104,28 @@ fun bankColors(bank: String): List<Color> = when (bank) {
     )[Math.floorMod(bank.hashCode(), 4)]
 }
 
-/** A card drawn like the real thing: bank, name, last 4, and a slot for what matters on this screen. */
+/** Short bank mark for the white badge on a card: "HDFC", "AXIS", "SBI". */
+fun bankShort(bank: String): String = when (bank) {
+    "State Bank of India" -> "SBI"
+    "American Express" -> "AMEX"
+    "Federal Bank" -> "FED"
+    "Indian Bank" -> "IB"
+    "IDFC First Bank" -> "IDFC"
+    else -> bank.split(' ').first().uppercase().take(5)
+}
+
+/**
+ * A card drawn like the real thing. Top row: bank badge, name, "Bank · •• 1234", and a [status] pill.
+ * Below: the masked number, then up to two [figures] (label to value) beside the network mark, and an
+ * optional [progress] bar (e.g. share of caps used). [corner] draws extra content on top.
+ */
 @Composable
 fun CardFace(
     card: Card,
     modifier: Modifier = Modifier,
-    badge: String? = null,
+    status: String? = null,
+    figures: List<Pair<String, String>> = emptyList(),
+    progress: Float? = null,
     corner: @Composable BoxScope.() -> Unit = {},
 ) {
     val colors = cardGradient(card)
@@ -119,34 +136,53 @@ fun CardFace(
             .clip(RoundedCornerShape(22.dp))
             .background(Brush.linearGradient(colors, start = Offset.Zero, end = Offset.Infinite)),
     ) {
-        // Soft light circles for depth.
+        // Soft light shapes for depth.
         Canvas(Modifier.matchParentSize()) {
             drawCircle(Color.White.copy(alpha = 0.07f), radius = size.width * 0.55f, center = Offset(size.width * 1.05f, -size.height * 0.1f))
             drawCircle(Color.White.copy(alpha = 0.05f), radius = size.width * 0.4f, center = Offset(-size.width * 0.1f, size.height * 1.1f))
         }
-        Column(Modifier.matchParentSize().padding(20.dp)) {
+        Column(Modifier.matchParentSize().padding(horizontal = 18.dp, vertical = 16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(card.bank.uppercase(), color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.4.sp, modifier = Modifier.weight(1f))
-                badge?.let {
+                Box(Modifier.size(38.dp).clip(RoundedCornerShape(10.dp)).background(Color.White), contentAlignment = Alignment.Center) {
+                    Text(bankShort(card.bank), color = colors.last().copy(alpha = 1f), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(card.name, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text("${card.bank} · •• ${card.last4.ifBlank { "····" }}", color = Color.White.copy(alpha = 0.75f), fontSize = 12.sp, maxLines = 1)
+                }
+                status?.let {
                     Surface(color = Color.White.copy(alpha = 0.18f), shape = CircleShape) {
-                        Text(it, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                        Text(it, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp))
                     }
                 }
             }
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.weight(1f))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(card.name, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                NetworkMark(card.network)
+                Box(Modifier.size(34.dp, 25.dp).clip(RoundedCornerShape(5.dp))
+                    .background(Brush.linearGradient(listOf(Color(0xFFE9D9A6), Color(0xFFB79A55)))))
+                Spacer(Modifier.width(16.dp))
+                Text("••••  ••••  ••••  ${card.last4.ifBlank { "····" }}", color = Color.White.copy(alpha = 0.92f), fontSize = 16.sp,
+                    fontFamily = FontFamily.Monospace, letterSpacing = 1.sp, maxLines = 1)
             }
             Spacer(Modifier.weight(1f))
-            // Chip
-            Box(Modifier.size(38.dp, 28.dp).clip(RoundedCornerShape(6.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFFE9D9A6), Color(0xFFB79A55)))))
-            Spacer(Modifier.height(10.dp))
-            Text("••••  ${card.last4}", color = Color.White.copy(alpha = 0.92f), fontSize = 17.sp,
-                fontFamily = FontFamily.Monospace, letterSpacing = 2.sp)
+            Row(verticalAlignment = Alignment.Bottom) {
+                figures.take(2).forEach { (label, value) ->
+                    Column(Modifier.weight(1f)) {
+                        Text(label.uppercase(), color = Color.White.copy(alpha = 0.7f), fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
+                        Text(value, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                    }
+                }
+                if (figures.isEmpty()) Spacer(Modifier.weight(1f))
+                NetworkMark(card.network)
+            }
+            progress?.let { p ->
+                Spacer(Modifier.height(10.dp))
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.25f))) {
+                    if (p > 0f) Box(Modifier.fillMaxWidth(p.coerceIn(0.02f, 1f)).fillMaxHeight().clip(CircleShape).background(Color.White))
+                }
+            }
         }
         corner()
     }

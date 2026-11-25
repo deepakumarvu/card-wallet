@@ -18,7 +18,8 @@ object Pdf {
     }
 
     sealed interface Result {
-        data class Text(val text: String) : Result
+        /** [password]: the one that opened it ("" when it wasn't locked). */
+        data class Text(val text: String, val password: String = "") : Result
         data object Locked : Result
         data class Failed(val reason: String) : Result
     }
@@ -29,7 +30,7 @@ object Pdf {
             try {
                 PDDocument.load(bytes, pw).use { doc ->
                     val stripper = PDFTextStripper().apply { sortByPosition = true }
-                    return Result.Text(stripper.getText(doc))
+                    return Result.Text(stripper.getText(doc), pw)
                 }
             } catch (_: InvalidPasswordException) {
                 continue

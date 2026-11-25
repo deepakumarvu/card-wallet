@@ -183,17 +183,12 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
         item {
             SectionLabel(if (merchant.isBlank()) "Best for any spend" else "Best at ${merchant.trim()}")
             Spacer(Modifier.height(10.dp))
-            CardFace(best.card, badge = "★ BEST") {
-                Column(Modifier.align(Alignment.BottomEnd).padding(20.dp), horizontalAlignment = Alignment.End) {
-                    if (best.card.showPoints && best.card.rupeesPerPoint != 1.0) {
-                        Text(reward(best.rewardUnits, best.card), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-                        Text("worth ${rupees(best.cashbackPaise)}", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
-                    } else {
-                        Text(rupees(best.cashbackPaise), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
-                        Text("back", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
-                    }
-                }
-            }
+            val pointsCard = best.card.showPoints && best.card.rupeesPerPoint != 1.0
+            CardFace(best.card, status = "★ BEST", figures = listOfNotNull(
+                "Back" to rupees(best.cashbackPaise),
+                if (pointsCard) "Points" to reward(best.rewardUnits, best.card)
+                else "Rate" to pct(Cashback.valuePercent(best.rule?.ratePercent ?: best.card.baseRatePercent, best.card)),
+            ))
         }
         item {
             Panel {
@@ -432,7 +427,7 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
             note = SmsSpends.whyWaiting(sms.body, sms.sender, cards),
             title = "Message $position of ${unread.size}",
             onSave = { doneKeys += sms.smsKey; scope.launch { dao.saveLogged(it); dao.deleteLogged(sms, "saved as a spend") } },
-            onDelete = { doneKeys += sms.smsKey; scope.launch { dao.deleteLogged(sms, "marked not a spend") } },
+            onDelete = { doneKeys += sms.smsKey; scope.launch { SmsSpends.markNotSpend(dao, sms) } },
             deleteLabel = "Not a spend",
             onSkip = { doneKeys += sms.smsKey },
             onDismiss = { reviewing = false })
@@ -613,7 +608,7 @@ private fun CardStack(
                                         )
                                     })
                                     .clickable { onToggle(card) },
-                                badge = cardBadge(card),
+                                status = cardBadge(card),
                             ) {
                                 if (open && !card.isDebit) Text(card.statementDay?.let { "Statement on day $it" } ?: "Statement day not set",
                                     color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp,

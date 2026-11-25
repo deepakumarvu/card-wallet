@@ -57,8 +57,12 @@ object StatementImport {
         Pdf.init(context)
         val cards = dao.allCards()
         val digits = cards.flatMap { listOf(it.last4) + it.oldLast4.split(',') }.map { it.trim() }.filter { it.length == 4 }
-        val text = when (val r = Pdf.extract(bytes, Passwords.candidates(profile, digits))) {
-            is Pdf.Result.Text -> r.text
+        // The password that opened the last statement is tried first; it's usually the same every month.
+        val prefs = context.getSharedPreferences("statements", Context.MODE_PRIVATE)
+        val worked = prefs.getStringSet("passwords_that_worked", emptySet()).orEmpty()
+        val candidates = (worked.toList() + Passwords.candidates(profile, digits)).distinct()
+        val text = when (val r = Pdf.extract(bytes, candidates)) {
+            is Pdf.Result.Text -> r.text.also { if (r.password.isNotEmpty()) prefs.edit().putStringSet("passwords_that_worked", worked + r.password).apply() }
             Pdf.Result.Locked -> return done(dao, Outcome("Couldn't unlock the PDF. Add your name and date of birth under More → Statements."))
             is Pdf.Result.Failed -> return done(dao, Outcome("Couldn't read the PDF (${r.reason})."))
         }

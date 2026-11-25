@@ -102,4 +102,16 @@ class SmsSpendsTest {
         val result = SmsSpends.read(axisSms, "AX-AXISBK-S", 42, listOf(renewed))
         assertEquals(renewed.id, (result as Result.CardSpend).spend.cardId)
     }
+
+    @Test
+    fun `a message shape marked not a spend is skipped next time, whatever the numbers`() {
+        val declined = "Txn on Axis Bank Credit Card XX1234 has been declined as amt exceeds usage limit. Call 18604195555 - Axis Bank"
+        val later = "Txn on Axis Bank Credit Card XX9876 has been declined as amt exceeds usage limit. Call 18604195555 - Axis Bank"
+        assertEquals("AXISBK", SmsSpends.senderKey("AD-AXISBK-S"))
+        assertEquals(SmsSpends.shapeKey("AD-AXISBK-S", declined), SmsSpends.shapeKey("VM-AXISBK-S", later))
+        val ignored = setOf(SmsSpends.shapeKey("AD-AXISBK-S", declined))
+        assertEquals(Result.Ignore, SmsSpends.read(later, "JD-AXISBK-S", 1, listOf(axis), ignored))
+        // Real spends from the same bank still get logged.
+        assertTrue(SmsSpends.read(axisSms, "AX-AXISBK-S", 1, listOf(axis), ignored) is Result.CardSpend)
+    }
 }

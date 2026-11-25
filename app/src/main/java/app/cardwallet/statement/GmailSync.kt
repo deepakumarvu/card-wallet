@@ -12,7 +12,7 @@ import kotlin.math.abs
 
 /**
  * Reads statement PDFs and card alert emails from Gmail, read-only, with a Google token
- * (gmail.readonly). Mail is read straight from Gmail over IMAP on the phone; nothing goes anywhere else.
+ * (gmail.readonly) through the Gmail API, on the phone; nothing goes anywhere else.
  */
 object GmailSync {
     const val SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -36,6 +36,20 @@ object GmailSync {
     /** Banks that email card alerts we can read. */
     private val alertSenders = mapOf("HDFC Bank" to listOf("alerts@hdfcbank.bank.in", "alerts@hdfcbank.net"))
 
+    /** The Gmail address a token belongs to, from Gmail's own profile endpoint (read-only scope covers it). */
+    fun emailFor(token: String): String {
+        val conn = java.net.URL("https://gmail.googleapis.com/gmail/v1/users/me/profile").openConnection() as java.net.HttpURLConnection
+        conn.setRequestProperty("Authorization", "Bearer $token")
+        conn.connectTimeout = 15_000
+        conn.readTimeout = 15_000
+        try {
+            if (conn.responseCode != 200) error("Gmail profile: HTTP ${conn.responseCode}")
+            return org.json.JSONObject(conn.inputStream.bufferedReader().readText()).getString("emailAddress")
+        } finally {
+            conn.disconnect()
+        }
+    }
+
     /** A card alert email as a spend on the right card, or null when it isn't one we can place. */
     fun spendFromAlert(alert: CardAlert, msgId: String, cards: List<Card>, existing: List<Spend>): Spend? {
         if (alert.kind != TxnKind.SPEND || alert.isCredit || alert.currency != "INR") return null
@@ -48,23 +62,26 @@ object GmailSync {
     }
 
     /** One run: new statements since the last run (first run: 6 months), then new alert emails. Returns a summary. */
-    suspend fun sync(context: Context, dao: WalletDao, email: String, token: String, profile: PdfProfile): String {
+    private const val FIRST_ALERT_DAYS = 7L
+
+    /** [progress] gets short status lines while the sync runs ("Statement 3 of 12…"). */
+    suspend fun sync(context: Context, dao: WalletDao, token: String, profile: PdfProfile, progress: (String) -> Unit = {}): String {
         val prefs = context.getSharedPreferences("gmail", Context.MODE_PRIVATE)
         val cards = dao.allCards()
         val banks = cards.filter { !it.isDebit }.map { it.bank }.distinct()
         val now = System.currentTimeMillis()
         val since = prefs.getLong("synced_up_to", 0).takeIf { it > 0 }?.minus(DAY) ?: (now - FIRST_LOOK_DAYS * DAY)
         val seen = prefs.getStringSet("seen_pdfs", emptySet()).orEmpty().toMutableSet()
-        val client = MailClient("imap.gmail.com", 993, email, token)
+        val gmail = GmailApi(token)
 
         var statements = 0
         var fromStatements = 0
-        val notes = mutableListOf<String>()
-        client.fetchStatements(
-            Date(since), banks.flatMap { statementFrom[it].orEmpty() }, banks.flatMap { domains[it].orEmpty() },
-            skip = { it in seen },
-        ) { _, _, pdf, failure ->
-            if (failure != null) { notes += "${pdf.fileName}: $failure"; return@fetchStatements }
+        progress("Searching Gmail for statements…")
+        val pdfs = gmail.statements(Date(since), banks.flatMap { statementFrom[it].orEmpty() }, banks.flatMap { domains[it].orEmpty() }, { it in seen }) { i, n ->
+            progress("Downloading statement $i of $n…")
+        }
+        for ((i, pdf) in pdfs.withIndex()) {
+            progress("Reading statement ${i + 1} of ${pdfs.size}…")
             val received = Instant.ofEpochMilli(pdf.receivedAt).atZone(ZoneId.systemDefault()).toLocalDate()
             val outcome = StatementImport.import(context, dao, pdf.bytes, profile, received)
             statements++
@@ -75,7 +92,10 @@ object GmailSync {
         var fromAlerts = 0
         val alertFrom = banks.flatMap { alertSenders[it].orEmpty() }
         if (alertFrom.isNotEmpty()) {
-            for (m in client.fetchAlerts(Date(since), alertFrom)) {
+            // SMS already covers older spends; the first sync only looks at recent alert emails.
+            val alertsSince = prefs.getLong("synced_up_to", 0).takeIf { it > 0 }?.minus(DAY) ?: (now - FIRST_ALERT_DAYS * DAY)
+            progress("Searching Gmail for alert emails…")
+            for (m in gmail.alerts(Date(alertsSince), alertFrom) { i, n -> progress("Alert emails $i of $n…") }) {
                 val alert = AlertParser.parseEmail(m.subject, m.text, m.receivedAt) ?: continue
                 val spend = spendFromAlert(alert, m.msgId, cards, dao.allSpends()) ?: continue
                 if (dao.insertFromSms(spend) != -1L) fromAlerts++
@@ -84,8 +104,7 @@ object GmailSync {
 
         prefs.edit().putLong("synced_up_to", now).putStringSet("seen_pdfs", seen).apply()
         val summary = "Gmail: $statements statement${if (statements == 1) "" else "s"} ($fromStatements new spends), " +
-            "$fromAlerts new spend${if (fromAlerts == 1) "" else "s"} from alert emails" +
-            if (notes.isEmpty()) "." else ". Couldn't read: ${notes.joinToString("; ")}"
+            "$fromAlerts new spend${if (fromAlerts == 1) "" else "s"} from alert emails."
         dao.log(summary)
         return summary
     }

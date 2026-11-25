@@ -28,7 +28,19 @@ object SmsSpends {
     /** A card was used but no money moved: declined, failed or unconfirmed. */
     private val noSpendWords = Regex("""\b(declined|unable to confirm|failed|reversed|reversal)\b""", RegexOption.IGNORE_CASE)
 
-    fun read(body: String, sender: String, timeMillis: Long, cards: List<Card>): Result {
+    /** The bank part of an SMS sender: "AD-AXISBK-S" → "AXISBK". */
+    fun senderKey(sender: String): String =
+        Regex("""^[A-Za-z]{2}-([A-Za-z0-9]+)(?:-[A-Za-z])?$""").find(sender.trim())?.groupValues?.get(1)?.uppercase() ?: sender.trim().uppercase()
+
+    /** A message with every number masked and spacing evened out, so the same kind of message matches. */
+    fun shapeOf(body: String): String = body.replace(Regex("""\d[\d,.]*"""), "#").replace(Regex("""\s+"""), " ").trim().lowercase()
+
+    /** Key for [ignored] lookups. */
+    fun shapeKey(sender: String, body: String) = senderKey(sender) + "|" + shapeOf(body)
+
+    /** [ignored]: shape keys you marked "Not a spend" (see [shapeKey]); those messages are skipped. */
+    fun read(body: String, sender: String, timeMillis: Long, cards: List<Card>, ignored: Set<String> = emptySet()): Result {
+        if (ignored.isNotEmpty() && shapeKey(sender, body) in ignored) return Result.Ignore
         val key = md5Hex("$sender|$timeMillis|$body")
         val needsYou = Result.NeedsYou(UnreadSms(sender = sender, body = body, timeMillis = timeMillis, smsKey = key))
         val tx = BankParserFactory.parse(body, sender, timeMillis)
@@ -107,11 +119,12 @@ object SmsSpends {
      */
     suspend fun retryUnread(dao: WalletDao): Int {
         val cards = dao.allCards()
+        val ignored = ignoredKeys(dao)
         var logged = 0
         var dropped = 0
         var waiting = 0
         for (sms in dao.allUnread()) {
-            val result = read(sms.body, sms.sender, sms.timeMillis, cards)
+            val result = read(sms.body, sms.sender, sms.timeMillis, cards, ignored)
             when (result) {
                 is Result.CardSpend -> {
                     dao.insertFromSms(result.spend); dao.delete(sms); logged++
@@ -125,6 +138,20 @@ object SmsSpends {
         return logged
     }
 
+    suspend fun ignoredKeys(dao: WalletDao): Set<String> = dao.allIgnoredShapes().map { it.senderKey + "|" + it.shape }.toSet()
+
+    /**
+     * "Not a spend" on a waiting message: remember its shape, drop it, and drop other waiting
+     * messages of the same shape. Returns how many were dropped in all.
+     */
+    suspend fun markNotSpend(dao: WalletDao, sms: UnreadSms): Int {
+        val shape = IgnoredShape(senderKey = senderKey(sms.sender), shape = shapeOf(sms.body), createdMillis = System.currentTimeMillis())
+        if (dao.insertIgnoredShape(shape) != -1L) dao.log("Learned: ignore ${shape.senderKey} messages like \"${shape.shape.take(80)}…\"")
+        val same = dao.allUnread().filter { shapeKey(it.sender, it.body) == shapeKey(sms.sender, sms.body) }
+        same.forEach { dao.deleteLogged(it, "marked not a spend") }
+        return same.size
+    }
+
     /** Reads the SMS inbox from the 1st of last month. Returns how many spends/messages were new. */
     suspend fun importInbox(context: Context): Int {
         val dao = WalletDb.get(context).dao()
@@ -133,6 +160,7 @@ object SmsSpends {
             add(Calendar.MONTH, -1); set(Calendar.DAY_OF_MONTH, 1)
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0)
         }.timeInMillis
+        val ignored = ignoredKeys(dao)
         var added = 0
         context.contentResolver.query(
             Telephony.Sms.Inbox.CONTENT_URI,
@@ -142,7 +170,7 @@ object SmsSpends {
             while (c.moveToNext()) {
                 val sender = c.getString(0) ?: continue
                 val body = c.getString(1) ?: continue
-                if (save(dao, read(body, sender, c.getLong(2), cards), cards)) added++
+                if (save(dao, read(body, sender, c.getLong(2), cards, ignored), cards)) added++
             }
         }
         dao.log("Read SMS inbox: $added new")
@@ -163,7 +191,7 @@ class SmsReceiver : BroadcastReceiver() {
             try {
                 val dao = WalletDb.get(context).dao()
                 val cards = dao.allCards()
-                SmsSpends.save(dao, SmsSpends.read(body, sender, time, cards), cards)
+                SmsSpends.save(dao, SmsSpends.read(body, sender, time, cards, SmsSpends.ignoredKeys(dao)), cards)
             } finally {
                 pending.finish()
             }
