@@ -114,4 +114,16 @@ class SmsSpendsTest {
         // Real spends from the same bank still get logged.
         assertTrue(SmsSpends.read(axisSms, "AX-AXISBK-S", 1, listOf(axis), ignored) is Result.CardSpend)
     }
+
+    @Test
+    fun `near-identical ignored shapes merge into one with a wildcard`() {
+        val a = SmsSpends.shapeOf("Payment of Rs 500 to SWIGGY declined due to low limit")
+        val b = SmsSpends.shapeOf("Payment of Rs 120 to ZOMATO declined due to low limit")
+        val merged = SmsSpends.merge(a, b)!!
+        assertEquals("payment of rs # to * declined due to low limit", merged)
+        val ignored = setOf("AXISBK|$merged")
+        assertEquals(Result.Ignore, SmsSpends.read("Payment of Rs 75 to UBER declined due to low limit", "AD-AXISBK-S", 1, listOf(axis), ignored))
+        // Too different (more than 2 words) stays separate.
+        assertEquals(null, SmsSpends.merge(a, SmsSpends.shapeOf("Your card limit has been raised to Rs 50000 from today")))
+    }
 }

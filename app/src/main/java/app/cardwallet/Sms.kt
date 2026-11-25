@@ -38,9 +38,32 @@ object SmsSpends {
     /** Key for [ignored] lookups. */
     fun shapeKey(sender: String, body: String) = senderKey(sender) + "|" + shapeOf(body)
 
-    /** [ignored]: shape keys you marked "Not a spend" (see [shapeKey]); those messages are skipped. */
+    /** True when shape [key] fits [pattern]: same bank, same words, "*" in the pattern matching any one word. */
+    fun fits(pattern: String, key: String): Boolean {
+        val (pSender, pShape) = pattern.split('|', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+        val (kSender, kShape) = key.split('|', limit = 2).let { it[0] to it.getOrElse(1) { "" } }
+        if (pSender != kSender) return false
+        val p = pShape.split(' ')
+        val k = kShape.split(' ')
+        return p.size == k.size && p.indices.all { p[it] == "*" || p[it] == k[it] }
+    }
+
+    /**
+     * A shape covering both [a] and [b] when they differ in 1 or 2 words ("to swiggy" / "to zomato" → "to *"),
+     * else null. Keeps the ignored list short.
+     */
+    fun merge(a: String, b: String): String? {
+        val x = a.split(' ')
+        val y = b.split(' ')
+        if (x.size != y.size || x.size < 4) return null
+        val differ = x.indices.filter { x[it] != y[it] && x[it] != "*" }
+        if (differ.isEmpty() || differ.size > 2) return null
+        return x.indices.joinToString(" ") { if (it in differ) "*" else x[it] }
+    }
+
+    /** [ignored]: shape patterns you marked "Not a spend" (see [shapeKey], [fits]); those messages are skipped. */
     fun read(body: String, sender: String, timeMillis: Long, cards: List<Card>, ignored: Set<String> = emptySet()): Result {
-        if (ignored.isNotEmpty() && shapeKey(sender, body) in ignored) return Result.Ignore
+        if (ignored.isNotEmpty() && shapeKey(sender, body).let { key -> ignored.any { fits(it, key) } }) return Result.Ignore
         val key = md5Hex("$sender|$timeMillis|$body")
         val needsYou = Result.NeedsYou(UnreadSms(sender = sender, body = body, timeMillis = timeMillis, smsKey = key))
         val tx = BankParserFactory.parse(body, sender, timeMillis)
@@ -145,9 +168,16 @@ object SmsSpends {
      * messages of the same shape. Returns how many were dropped in all.
      */
     suspend fun markNotSpend(dao: WalletDao, sms: UnreadSms): Int {
-        val shape = IgnoredShape(senderKey = senderKey(sms.sender), shape = shapeOf(sms.body), createdMillis = System.currentTimeMillis())
-        if (dao.insertIgnoredShape(shape) != -1L) dao.log("Learned: ignore ${shape.senderKey} messages like \"${shape.shape.take(80)}…\"")
-        val same = dao.allUnread().filter { shapeKey(it.sender, it.body) == shapeKey(sms.sender, sms.body) }
+        val sender = senderKey(sms.sender)
+        var shape = shapeOf(sms.body)
+        // Fold into a near-identical entry from the same bank, so the list doesn't grow per merchant or name.
+        dao.allIgnoredShapes().filter { it.senderKey == sender }.firstNotNullOfOrNull { old -> merge(old.shape, shape)?.let { old to it } }
+            ?.let { (old, merged) -> dao.delete(old); shape = merged }
+        if (dao.insertIgnoredShape(IgnoredShape(senderKey = sender, shape = shape, createdMillis = System.currentTimeMillis())) != -1L) {
+            dao.log("Learned: ignore $sender messages like \"${shape.take(80)}…\"")
+        }
+        val pattern = "$sender|$shape"
+        val same = dao.allUnread().filter { fits(pattern, shapeKey(it.sender, it.body)) }
         same.forEach { dao.deleteLogged(it, "marked not a spend") }
         return same.size
     }

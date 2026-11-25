@@ -1,6 +1,8 @@
 package app.cardwallet
 
 import android.Manifest
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.foundation.layout.fillMaxWidth
 import java.text.SimpleDateFormat
@@ -86,8 +88,6 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     val merchants by dao.merchants().collectAsState(emptyList())
     val ignoredShapes by dao.ignoredShapes().collectAsState(emptyList())
     var restoreFrom by remember { mutableStateOf<android.net.Uri?>(null) }
-    var keyword by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("") }
     fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_LONG).show()
 
     val smsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { granted ->
@@ -109,6 +109,8 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     }
     val restore = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { restoreFrom = it }
     var showLog by remember { mutableStateOf(false) }
+    var showMerchants by remember { mutableStateOf(false) }
+    var showIgnored by remember { mutableStateOf(false) }
     // Name / date of birth / PAN / mobile for guessing statement PDF passwords. App-private, never backed up.
     val prefs = remember { context.getSharedPreferences("statements", android.content.Context.MODE_PRIVATE) }
     var profile by remember { mutableStateOf(app.cardwallet.statement.PdfProfile.fromJson(prefs.getString("profile", null))) }
@@ -277,23 +279,12 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                 }
             }
         }
-        if (ignoredShapes.isNotEmpty()) item {
+        // Long lists open on their own page, so this screen stays short.
+        item {
             Panel {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    PanelTitle(Icons.Default.Close, "Ignored message types")
-                    Text("Bank messages like these are skipped, because you marked one \"Not a spend\". Numbers are shown as #.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    ignoredShapes.forEach { s ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(s.senderKey, style = MaterialTheme.typography.titleSmall)
-                                Text(s.shape, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
-                            }
-                            IconButton(onClick = { scope.launch { dao.delete(s); dao.log("Stopped ignoring ${s.senderKey} messages like \"${s.shape.take(80)}…\"") } }) {
-                                Icon(Icons.Default.Delete, contentDescription = "Stop ignoring")
-                            }
-                        }
-                    }
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OpenRow(Icons.Default.List, "Merchant categories", "${merchants.size} keywords in ${merchants.map { it.category }.distinct().size} categories") { showMerchants = true }
+                    if (ignoredShapes.isNotEmpty()) OpenRow(Icons.Default.Close, "Ignored message types", "${ignoredShapes.size} kinds of bank message skipped") { showIgnored = true }
                 }
             }
         }
@@ -310,44 +301,11 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                 }
             }
         }
-        item {
-            Panel {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    PanelTitle(Icons.Default.List, "Merchant categories")
-                    Text("A merchant whose name has a word starting with the keyword falls in that category. Rules can use categories.",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(keyword, { keyword = it }, placeholder = { Text("Keyword") }, singleLine = true,
-                            shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
-                        OutlinedTextField(category, { category = it }, placeholder = { Text("Category") }, singleLine = true,
-                            shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
-                        FilledIconButton(enabled = keyword.isNotBlank() && category.isNotBlank(), onClick = {
-                            scope.launch { dao.saveLogged(MerchantCategory(keyword.trim().lowercase(), category.trim())) }
-                            keyword = ""
-                        }) { Icon(Icons.Default.Add, contentDescription = "Add") }
-                    }
-                    val allCategories = merchants.map { it.category }.distinct()
-                    merchants.groupBy { it.category }.toSortedMap().forEach { (cat, list) ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Dot(categoryColor(cat, allCategories))
-                                Spacer(Modifier.size(8.dp))
-                                Text(cat, style = MaterialTheme.typography.titleSmall)
-                            }
-                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                list.forEach { m ->
-                                    InputChip(selected = false, onClick = { scope.launch { dao.deleteLogged(m) } }, label = { Text(m.keyword) },
-                                        trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) })
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 
     if (showLog) ActivityLog(dao, onClose = { showLog = false })
+    if (showMerchants) MerchantCategoriesScreen(dao, onClose = { showMerchants = false })
+    if (showIgnored) IgnoredShapesScreen(dao, onClose = { showIgnored = false })
     if (showLocked) LockedPdfsScreen(dao, onClose = {
         showLocked = false
         lockedCount = app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }
@@ -495,6 +453,96 @@ private fun LockedPdfsScreen(dao: WalletDao, onClose: () -> Unit) {
                         }
                     }
                 }
+            }
+        },
+        confirmButton = { Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Done") } },
+    )
+}
+
+/** A tappable row that opens a page: icon, title, one line of detail, chevron. */
+@Composable
+private fun OpenRow(icon: androidx.compose.ui.graphics.vector.ImageVector, title: String, detail: String, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+        Spacer(Modifier.size(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(Icons.Default.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/** Merchant keywords by category: add, or tap one to remove. */
+@Composable
+private fun MerchantCategoriesScreen(dao: WalletDao, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val merchants by dao.merchants().collectAsState(emptyList())
+    var keyword by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf("") }
+    FormDialog(
+        onDismissRequest = onClose,
+        title = { Text("Merchant categories") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("A merchant whose name has a word starting with the keyword falls in that category. Rules can use categories.",
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(keyword, { keyword = it }, placeholder = { Text("Keyword") }, singleLine = true,
+                            shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
+                        OutlinedTextField(category, { category = it }, placeholder = { Text("Category") }, singleLine = true,
+                            shape = RoundedCornerShape(14.dp), modifier = Modifier.weight(1f))
+                        FilledIconButton(enabled = keyword.isNotBlank() && category.isNotBlank(), onClick = {
+                            scope.launch { dao.saveLogged(MerchantCategory(keyword.trim().lowercase(), category.trim())) }
+                            keyword = ""
+                        }) { Icon(Icons.Default.Add, contentDescription = "Add") }
+                    }
+                    val allCategories = merchants.map { it.category }.distinct()
+                    merchants.groupBy { it.category }.toSortedMap().forEach { (cat, list) ->
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Dot(categoryColor(cat, allCategories))
+                                Spacer(Modifier.size(8.dp))
+                                Text(cat, style = MaterialTheme.typography.titleSmall)
+                            }
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                list.forEach { m ->
+                                    InputChip(selected = false, onClick = { scope.launch { dao.deleteLogged(m) } }, label = { Text(m.keyword) },
+                                        trailingIcon = { Icon(Icons.Default.Close, contentDescription = "Remove", modifier = Modifier.size(16.dp)) })
+                                }
+                            }
+                        }
+                    }
+            }
+        },
+        confirmButton = { Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Done") } },
+    )
+}
+
+/** Kinds of bank message marked "Not a spend"; remove one to stop skipping it. */
+@Composable
+private fun IgnoredShapesScreen(dao: WalletDao, onClose: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val ignoredShapes by dao.ignoredShapes().collectAsState(emptyList())
+    FormDialog(
+        onDismissRequest = onClose,
+        title = { Text("Ignored message types") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Bank messages like these are skipped because you marked one \"Not a spend\". Numbers show as #, and * stands for any word.",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ignoredShapes.forEach { s ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(s.senderKey, style = MaterialTheme.typography.titleSmall)
+                                Text(s.shape, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                            }
+                            IconButton(onClick = { scope.launch { dao.delete(s); dao.log("Stopped ignoring ${s.senderKey} messages like \"${s.shape.take(80)}…\"") } }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Stop ignoring")
+                            }
+                        }
+                    }
             }
         },
         confirmButton = { Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Done") } },
