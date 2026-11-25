@@ -229,7 +229,6 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
                                         Text(c.name, style = MaterialTheme.typography.titleSmall)
                                         Text("since ${shortDate.format(Date(Cashback.cycleStart(c)))}",
                                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        billLine(lastBill[c.id])?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                     }
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text(rupees(t.spentPaise), style = MaterialTheme.typography.titleSmall)
@@ -237,6 +236,8 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
                                     }
                                 }
                                 ValueBar(t.spentPaise.toFloat() / max, cardGradient(c))
+                                // The last bill gets its own line, so the row doesn't feel cramped.
+                                billLine(lastBill[c.id])?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                             }
                         }
                     }

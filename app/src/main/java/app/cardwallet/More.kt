@@ -121,18 +121,15 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     // Gmail: Google sign-in gives a read-only token; Sync reads statements and alert emails with it.
     val gmailPrefs = remember { context.getSharedPreferences("gmail", android.content.Context.MODE_PRIVATE) }
     var gmail by remember { mutableStateOf(gmailPrefs.getString("email", "").orEmpty()) }
-    var syncing by remember { mutableStateOf(false) }
-    var syncStatus by remember { mutableStateOf("") }
+    val syncState by app.cardwallet.statement.GmailSync.state.collectAsState()
+    val syncing = syncState.running
+    // When a background sync finishes, refresh the locked-PDF count.
+    androidx.compose.runtime.LaunchedEffect(syncState.running) {
+        if (!syncState.running) lockedCount = app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }
+    }
     val notifyPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
-    fun runSync(token: String, email: String) {
-        syncing = true
-        scope.launch {
-            val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, token, profile) { syncStatus = it } } }
-            syncing = false
-            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }
-            toast(result.getOrElse { "Gmail sync failed: ${it.message}" })
-            result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it"); android.util.Log.e("CardWallet", "Gmail sync failed", it) }
-        }
+    fun runSync(token: String, @Suppress("UNUSED_PARAMETER") email: String) {
+        app.cardwallet.statement.GmailSync.start(context, dao, token, profile)
     }
     // Every sign-in step goes to the activity log, so a failed sign-in can be traced.
     fun signInNote(text: String) { toast(text); android.util.Log.w("CardWallet", "Gmail sign-in: $text"); scope.launch { dao.log("Gmail sign-in: $text") } }
@@ -236,7 +233,9 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                             connectAndSync()
                         }) { Text("Re-scan 6 months") }
                     }
-                    if (syncing && syncStatus.isNotBlank()) Text(syncStatus, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    if (syncing && syncState.status.isNotBlank()) Text(syncState.status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    if (!syncing && syncState.result.isNotBlank()) Text(syncState.result, style = MaterialTheme.typography.bodySmall,
+                        color = if (syncState.result.startsWith("Sync failed")) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

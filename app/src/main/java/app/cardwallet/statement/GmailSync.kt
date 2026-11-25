@@ -10,6 +10,7 @@ import java.time.ZoneId
 import java.util.Date
 import kotlin.math.abs
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 
 /**
  * Reads statement PDFs and card alert emails from Gmail, read-only, with a Google token
@@ -66,6 +67,24 @@ object GmailSync {
     private const val FIRST_ALERT_DAYS = 7L
 
     /** [progress] gets short status lines while the sync runs ("Statement 3 of 12…"). */
+    /** What the screen shows: whether a sync is running, its latest progress line, and the last result. */
+    data class State(val running: Boolean = false, val status: String = "", val result: String = "")
+    val state = kotlinx.coroutines.flow.MutableStateFlow(State())
+
+    /** Runs for the whole app, not one screen: switching tabs mid-sync no longer cancels it. */
+    private val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    /** Starts a sync in the background (ignored if one is running); follow it through [state]. */
+    fun start(context: Context, dao: WalletDao, token: String, profile: PdfProfile) {
+        if (state.value.running) return
+        state.value = State(running = true, status = "Starting…")
+        appScope.launch {
+            val result = runCatching { sync(context.applicationContext, dao, token, profile) { s -> state.value = state.value.copy(status = s) } }
+            result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it"); android.util.Log.e("CardWallet", "Gmail sync failed", it) }
+            state.value = State(running = false, result = result.getOrElse { "Sync failed: ${it.message}" })
+        }
+    }
+
     /** One sync at a time: the daily one and a tap on Sync now never overlap. */
     private val running = kotlinx.coroutines.sync.Mutex()
 
