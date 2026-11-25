@@ -172,6 +172,8 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
     var showPoints by remember { mutableStateOf(card.showPoints) }
     var internationalOnly by remember { mutableStateOf(card.internationalOnly) }
     var block by remember { mutableStateOf(card.earnBlockRupees?.toString() ?: "") }
+    var forex by remember { mutableStateOf(card.forexMarkupPercent.toString()) }
+    var rewardsAbroad by remember { mutableStateOf(card.rewardsAbroad) }
     var network by remember { mutableStateOf(card.network) }
     var colorIndex by remember { mutableStateOf(card.colorIndex) }
     var confirmDelete by remember { mutableStateOf(false) }
@@ -218,6 +220,13 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
                         Checkbox(showPoints, { showPoints = it })
                         Text("Show points as well as ₹")
                     }
+                    OutlinedTextField(forex, { forex = it }, label = { Text("Forex fee on foreign spends (%)") }, singleLine = true,
+                        supportingText = { Text("Usually 3.5. Scapia 0.") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { rewardsAbroad = !rewardsAbroad }) {
+                        Checkbox(rewardsAbroad, { rewardsAbroad = it })
+                        Text("Earns rewards on international spends")
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { internationalOnly = !internationalOnly }) {
                         Checkbox(internationalOnly, { internationalOnly = it })
                         Text("Only for international spends")
@@ -236,6 +245,7 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
                         if (isDebit) card.copy(name = name.trim(), bank = bank, last4 = last4, oldLast4 = oldLast4.trim(), isDebit = true, network = network, colorIndex = colorIndex, baseRatePercent = 0.0, rupeesPerPoint = 1.0, statementDay = null)
                         else card.copy(name = name.trim(), bank = bank, last4 = last4, oldLast4 = oldLast4.trim(), isDebit = false, baseRatePercent = base.toDouble(),
                             rupeesPerPoint = pointValue.toDouble(), statementDay = day.toIntOrNull(), showPoints = showPoints, internationalOnly = internationalOnly,
+                            forexMarkupPercent = forex.toDoubleOrNull() ?: card.forexMarkupPercent, rewardsAbroad = rewardsAbroad,
                             earnBlockRupees = block.toIntOrNull()?.takeIf { it > 0 },
                             network = network, colorIndex = colorIndex),
                     )

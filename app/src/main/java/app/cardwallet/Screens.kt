@@ -185,7 +185,7 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
             Spacer(Modifier.height(10.dp))
             val pointsCard = best.card.showPoints && best.card.rupeesPerPoint != 1.0
             CardFace(best.card, status = "★ BEST", figures = listOfNotNull(
-                "Back" to rupees(best.cashbackPaise),
+                (if (international) "Net" else "Back") to rupees(best.cashbackPaise),
                 if (pointsCard) "Points" to reward(best.rewardUnits, best.card)
                 else "Rate" to pct(Cashback.valuePercent(best.rule?.ratePercent ?: best.card.baseRatePercent, best.card)),
             ))
@@ -205,6 +205,10 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
                         capNote(rule)?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                     }
                     best.cappedOut?.let { CappedOutNote(it, best.card) }
+                    if (international) Text(
+                        "Abroad: ${pct(best.card.forexMarkupPercent)} forex fee (${rupees(best.forexFeePaise)})" +
+                            if (best.card.rewardsAbroad) ", rewards ${rupees(best.cashbackPaise + best.forexFeePaise)}" else ", no rewards abroad",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

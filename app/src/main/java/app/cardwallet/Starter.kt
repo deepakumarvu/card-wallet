@@ -31,6 +31,8 @@ object Starter {
         val color: Int? = null,
         val internationalOnly: Boolean = false,
         val earnBlockRupees: Int? = null,
+        val forexMarkupPercent: Double = 3.5,
+        val rewardsAbroad: Boolean = true,
     )
 
     val cards = listOf(
@@ -38,7 +40,7 @@ object Starter {
             RuleTemplate("Swiggy & online 5%", keywords = "swiggy", category = "Online", rate = 5.0, cap = 1500, minRupees = 100),
         )),
         // 5 points per ₹200; ₹0.50 a point on flights.
-        CardTemplate("HDFC Regalia Gold", "HDFC Bank", 2.5, rupeesPerPoint = 0.5, showPoints = true, network = "Mastercard", color = 13, earnBlockRupees = 200),
+        CardTemplate("HDFC Regalia Gold", "HDFC Bank", 2.5, rupeesPerPoint = 0.5, showPoints = true, network = "Mastercard", color = 13, earnBlockRupees = 200, forexMarkupPercent = 2.0),
         CardTemplate("HDFC PhonePe Ultimo", "HDFC Bank", 1.0, network = "RuPay", color = 14, rules = listOf(
             RuleTemplate("Bills & recharges 10%", category = "Bills", rate = 10.0, cap = 1000),
             RuleTemplate("Online shopping 5%", category = "Online", rate = 5.0, cap = 500),
@@ -52,14 +54,14 @@ object Starter {
             RuleTemplate("Electricity & other bills 10%", category = "Bills", rate = 10.0, capBaseMultiple = 1.0),
         )),
         // Scapia coins: 5 coins = ₹1. Visa card: 10 coins per ₹100.
-        CardTemplate("Scapia", "Federal Bank", 10.0, network = "Visa", color = 18, internationalOnly = true, rules = listOf(
+        CardTemplate("Scapia", "Federal Bank", 10.0, network = "Visa", color = 18, internationalOnly = true, forexMarkupPercent = 0.0, rewardsAbroad = false, rules = listOf(
             RuleTemplate("Travel in Scapia app 4%", keywords = "scapia", rate = 20.0),
             RuleTemplate("Utility bills 2%", category = "Bills", rate = 10.0, cap = 2000), // first ₹20,000 a month
             RuleTemplate("Fuel", category = "Fuel", rate = 0.0),
             RuleTemplate("Rent", category = "Rent", rate = 0.0),
             RuleTemplate("Insurance", category = "Insurance", rate = 0.0),
         ), rupeesPerPoint = 0.2),
-        CardTemplate("Amazon Pay ICICI", "ICICI Bank", 1.0, network = "Visa", color = 9, rules = listOf(
+        CardTemplate("Amazon Pay ICICI", "ICICI Bank", 1.0, network = "Visa", color = 9, forexMarkupPercent = 1.99, rules = listOf(
             RuleTemplate("Amazon 5% (Prime)", keywords = "amazon", rate = 5.0),
             RuleTemplate("Partners 2%", keywords = "swiggy, zomato, uber, bookmyshow", rate = 2.0),
         )),
@@ -110,7 +112,10 @@ object Starter {
     fun withLooks(card: Card): Card {
         val t = cards.find { it.name == card.name } ?: return card
         return card.copy(colorIndex = card.colorIndex ?: t.color, network = card.network ?: t.network, showPoints = card.showPoints || t.showPoints,
-            internationalOnly = card.internationalOnly || t.internationalOnly, earnBlockRupees = card.earnBlockRupees ?: t.earnBlockRupees)
+            internationalOnly = card.internationalOnly || t.internationalOnly, earnBlockRupees = card.earnBlockRupees ?: t.earnBlockRupees,
+            // 3.5 is the default; a card still on it takes its template's fee.
+            forexMarkupPercent = if (card.forexMarkupPercent == 3.5) t.forexMarkupPercent else card.forexMarkupPercent,
+            rewardsAbroad = card.rewardsAbroad && t.rewardsAbroad)
     }
 
     /** Rules from the card's starter template that it no longer has (matched by name). */
@@ -131,7 +136,7 @@ object Starter {
                 statementDay = statementDay.takeIf { !template.isDebit }, rupeesPerPoint = template.rupeesPerPoint, isDebit = template.isDebit,
                 sortOrder = dao.nextSortOrder(), showPoints = template.showPoints,
                 network = template.network, colorIndex = template.color, internationalOnly = template.internationalOnly,
-                earnBlockRupees = template.earnBlockRupees),
+                earnBlockRupees = template.earnBlockRupees, forexMarkupPercent = template.forexMarkupPercent, rewardsAbroad = template.rewardsAbroad),
         )
         template.rules.forEach {
             dao.saveLogged(Rule(cardId = cardId, label = it.label, keywords = it.keywords, category = it.category, ratePercent = it.rate,

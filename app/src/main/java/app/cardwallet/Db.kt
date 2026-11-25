@@ -50,6 +50,10 @@ data class Card(
     val earnBlockRupees: Int? = null,
     /** Last 4 digits of earlier cards replaced by this one (comma-separated), so their bank SMS land here. */
     @ColumnInfo(defaultValue = "''") val oldLast4: String = "",
+    /** Fee on foreign-currency spends, e.g. 3.5 (%). */
+    @ColumnInfo(defaultValue = "3.5") val forexMarkupPercent: Double = 3.5,
+    /** False when the card gives no reward on international spends (Scapia: 0% fee, no coins). */
+    @ColumnInfo(defaultValue = "1") val rewardsAbroad: Boolean = true,
 ) {
     /** True when SMS digits [digits] belong to this card, now or before a replacement. */
     fun hasDigits(digits: String?): Boolean =
@@ -184,10 +188,10 @@ interface WalletDao {
 
 @Database(
     entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class, LogEntry::class, IgnoredShape::class],
-    version = 9,
+    version = 10,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
-        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9),
+        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8), AutoMigration(from = 8, to = 9), AutoMigration(from = 9, to = 10),
     ],
 )
 abstract class WalletDb : RoomDatabase() {

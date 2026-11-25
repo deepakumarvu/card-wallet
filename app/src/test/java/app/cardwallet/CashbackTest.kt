@@ -255,4 +255,19 @@ class CashbackTest {
         for (merchant in listOf("_TITAN COMPANY LIM.", "TANISHQ JEWELLERY", "SRI LAKSHMI JEWELLERS", "CARATLANE TRADING"))
             assertEquals(merchant, true, "Jewellery" in Cashback.categoriesOf(merchant, Starter.merchants))
     }
+
+    @Test
+    fun `abroad, cards are ranked by reward minus forex fee`() {
+        val scapia = Card(11, "Scapia", "Federal Bank", "1111", 10.0, rupeesPerPoint = 0.2, internationalOnly = true,
+            forexMarkupPercent = 0.0, rewardsAbroad = false)
+        val regalia = Card(12, "Regalia Gold", "HDFC Bank", "2222", 2.5, rupeesPerPoint = 0.5, forexMarkupPercent = 2.0)
+        val plain = Card(13, "Plain", "Axis Bank", "3333", 1.0) // 3.5% fee
+        val picks = Cashback.rank(1000_00, "HOTEL PARIS", listOf(plain, regalia, scapia), emptyList(), emptyList(), table, now, international = true)
+        assertEquals(listOf(scapia, regalia, plain), picks.map { it.card })
+        assertEquals("no coins abroad, no fee", 0L, picks[0].cashbackPaise)
+        assertEquals("₹12.50 back − ₹20 fee", -7_50L, picks[1].cashbackPaise)
+        assertEquals("₹10 back − ₹35 fee", -25_00L, picks[2].cashbackPaise)
+        // At home the fee doesn't apply.
+        assertEquals(12_50L, Cashback.rank(1000_00, "HOTEL", listOf(regalia), emptyList(), emptyList(), table, now).single().cashbackPaise)
+    }
 }

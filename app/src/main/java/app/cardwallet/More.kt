@@ -125,11 +125,11 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
             val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, token, profile) { syncStatus = it } } }
             syncing = false
             toast(result.getOrElse { "Gmail sync failed: ${it.message}" })
-            result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it") }
+            result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it"); android.util.Log.e("CardWallet", "Gmail sync failed", it) }
         }
     }
     // Every sign-in step goes to the activity log, so a failed sign-in can be traced.
-    fun signInNote(text: String) { toast(text); scope.launch { dao.log("Gmail sign-in: $text") } }
+    fun signInNote(text: String) { toast(text); android.util.Log.w("CardWallet", "Gmail sign-in: $text"); scope.launch { dao.log("Gmail sign-in: $text") } }
     fun gotToken(result: com.google.android.gms.auth.api.identity.AuthorizationResult) {
         val token = result.accessToken ?: return signInNote("Google didn't give access to Gmail.")
         scope.launch {
@@ -388,6 +388,7 @@ private fun ProfileForm(profile: app.cardwallet.statement.PdfProfile, onDismiss:
     var dob by remember { mutableStateOf(profile.dob?.format(dobFormat).orEmpty()) }
     var pan by remember { mutableStateOf(profile.pan) }
     var mobile by remember { mutableStateOf(profile.mobile) }
+    var patterns by remember { mutableStateOf(profile.templates.joinToString(", ")) }
     val dobDate = runCatching { java.time.LocalDate.parse(dob.trim(), dobFormat) }.getOrNull()
     FormDialog(
         onDismissRequest = onDismiss,
@@ -402,11 +403,15 @@ private fun ProfileForm(profile: app.cardwallet.statement.PdfProfile, onDismiss:
                     isError = dob.isNotBlank() && dobDate == null)
                 OutlinedTextField(pan, { pan = it.uppercase() }, label = { Text("PAN (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(mobile, { mobile = it.filter(Char::isDigit) }, label = { Text("Mobile (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(patterns, { patterns = it }, label = { Text("Your own patterns (optional)") }, modifier = Modifier.fillMaxWidth(),
+                    supportingText = { Text("For banks whose format isn't guessed, comma-separated. Use " +
+                        app.cardwallet.statement.Passwords.TOKENS.joinToString(", ") { "${it.first} = ${it.second}" }) })
             }
         },
         confirmButton = {
             Button(enabled = dob.isBlank() || dobDate != null, modifier = Modifier.fillMaxWidth(),
-                onClick = { onSave(profile.copy(name = name.trim(), dob = dobDate, pan = pan.trim(), mobile = mobile)) }) { Text("Save") }
+                onClick = { onSave(profile.copy(name = name.trim(), dob = dobDate, pan = pan.trim(), mobile = mobile,
+                    templates = patterns.split(',').map { it.trim() }.filter { it.isNotEmpty() })) }) { Text("Save") }
         },
     )
 }

@@ -29,7 +29,11 @@ class GmailApi(private val token: String) {
         conn.readTimeout = 60_000
         try {
             val code = conn.responseCode
-            if (code != 200) error("Gmail API HTTP $code: ${conn.errorStream?.bufferedReader()?.readText()?.take(200)}")
+            if (code != 200) {
+                val why = conn.errorStream?.bufferedReader()?.readText()?.take(600)
+                android.util.Log.e("CardWallet", "Gmail API $path → HTTP $code: $why")
+                error("Gmail API HTTP $code: ${why?.take(200)}")
+            }
             return JSONObject(conn.inputStream.bufferedReader().readText())
         } finally {
             conn.disconnect()

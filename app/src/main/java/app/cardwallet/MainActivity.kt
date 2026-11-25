@@ -46,9 +46,9 @@ class MainActivity : ComponentActivity() {
                     prefs.edit { putBoolean("seeded_jewellery", true) }
                 }
                 // Bump the key when templates gain new settings, so existing cards pick them up once.
-                if (!prefs.getBoolean("looks_filled_v3", false)) {
+                if (!prefs.getBoolean("looks_filled_v4", false)) {
                     Starter.fillLooks(dao)
-                    prefs.edit { putBoolean("looks_filled_v3", true) }
+                    prefs.edit { putBoolean("looks_filled_v4", true) }
                 }
                 if (!prefs.getBoolean("recolours_v1", false)) {
                     Starter.applyRecolours(dao)

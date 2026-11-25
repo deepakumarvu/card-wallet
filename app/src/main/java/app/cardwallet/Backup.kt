@@ -18,8 +18,8 @@ object Backup {
 
     fun write(content: Content, out: OutputStream) {
         val files = mapOf(
-            "cards.csv" to listOf(listOf("id", "name", "bank", "last4", "base_rate_percent", "statement_day", "rupees_per_point", "is_debit", "sort_order", "show_points", "network", "color_index", "international_only", "earn_block_rupees", "old_last4")) +
-                content.cards.map { listOf(it.id, it.name, it.bank, it.last4, it.baseRatePercent, it.statementDay ?: "", it.rupeesPerPoint, it.isDebit, it.sortOrder, it.showPoints, it.network ?: "", it.colorIndex ?: "", it.internationalOnly, it.earnBlockRupees ?: "", it.oldLast4).map(Any::toString) },
+            "cards.csv" to listOf(listOf("id", "name", "bank", "last4", "base_rate_percent", "statement_day", "rupees_per_point", "is_debit", "sort_order", "show_points", "network", "color_index", "international_only", "earn_block_rupees", "old_last4", "forex_markup_percent", "rewards_abroad")) +
+                content.cards.map { listOf(it.id, it.name, it.bank, it.last4, it.baseRatePercent, it.statementDay ?: "", it.rupeesPerPoint, it.isDebit, it.sortOrder, it.showPoints, it.network ?: "", it.colorIndex ?: "", it.internationalOnly, it.earnBlockRupees ?: "", it.oldLast4, it.forexMarkupPercent, it.rewardsAbroad).map(Any::toString) },
             "rules.csv" to listOf(listOf("id", "card_id", "label", "keywords", "category", "rate_percent", "monthly_cap_paise", "min_amount_paise", "cap_base_multiple")) +
                 content.rules.map { listOf(it.id, it.cardId, it.label, it.keywords, it.category ?: "", it.ratePercent, it.monthlyCapPaise ?: "", it.minAmountPaise ?: "", it.capBaseMultiple ?: "").map(Any::toString) },
             "spends.csv" to listOf(listOf("id", "card_id", "amount_paise", "merchant", "time_millis", "sms_key")) +
@@ -52,7 +52,8 @@ object Backup {
                     it.getOrNull(6)?.ifEmpty { null }?.toDouble() ?: 1.0, it.getOrNull(7) == "true",
                     it.getOrNull(8)?.ifEmpty { null }?.toInt() ?: 0, it.getOrNull(9) == "true",
                     it.getOrNull(10)?.ifEmpty { null }, it.getOrNull(11)?.ifEmpty { null }?.toInt(),
-                    it.getOrNull(12) == "true", it.getOrNull(13)?.ifEmpty { null }?.toInt(), it.getOrNull(14).orEmpty())
+                    it.getOrNull(12) == "true", it.getOrNull(13)?.ifEmpty { null }?.toInt(), it.getOrNull(14).orEmpty(),
+                    it.getOrNull(15)?.ifEmpty { null }?.toDouble() ?: 3.5, it.getOrNull(16) != "false")
             },
             rules = rows("rules.csv").map {
                 Rule(it[0].toLong(), it[1].toLong(), it[2], it[3], it[4].ifEmpty { null }, it[5].toDouble(), it[6].ifEmpty { null }?.toLong(),

@@ -83,7 +83,7 @@ object GmailSync {
         for ((i, pdf) in pdfs.withIndex()) {
             progress("Reading statement ${i + 1} of ${pdfs.size}…")
             val received = Instant.ofEpochMilli(pdf.receivedAt).atZone(ZoneId.systemDefault()).toLocalDate()
-            val outcome = StatementImport.import(context, dao, pdf.bytes, profile, received)
+            val outcome = StatementImport.import(context, dao, pdf.bytes, profile, received, "${pdf.from.substringAfter('<').substringBefore('>')} · ${pdf.fileName}")
             statements++
             fromStatements += outcome.added
             seen += pdf.key

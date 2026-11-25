@@ -53,7 +53,9 @@ object StatementImport {
     }
 
     /** Reads one statement PDF into the wallet. [received] is the email's date, for layouts that print no year. */
-    suspend fun import(context: Context, dao: WalletDao, bytes: ByteArray, profile: PdfProfile, received: LocalDate? = null): Outcome {
+    /** [label]: where the PDF came from (sender and file name), so failures say which one. */
+    suspend fun import(context: Context, dao: WalletDao, bytes: ByteArray, profile: PdfProfile, received: LocalDate? = null, label: String = ""): Outcome {
+        val from = if (label.isBlank()) "" else " ($label)"
         Pdf.init(context)
         val cards = dao.allCards()
         val digits = cards.flatMap { listOf(it.last4) + it.oldLast4.split(',') }.map { it.trim() }.filter { it.length == 4 }
@@ -63,8 +65,8 @@ object StatementImport {
         val candidates = (worked.toList() + Passwords.candidates(profile, digits)).distinct()
         val text = when (val r = Pdf.extract(bytes, candidates)) {
             is Pdf.Result.Text -> r.text.also { if (r.password.isNotEmpty()) prefs.edit().putStringSet("passwords_that_worked", worked + r.password).apply() }
-            Pdf.Result.Locked -> return done(dao, Outcome("Couldn't unlock the PDF. Add your name and date of birth under More → Statements."))
-            is Pdf.Result.Failed -> return done(dao, Outcome("Couldn't read the PDF (${r.reason})."))
+            Pdf.Result.Locked -> return done(dao, Outcome("Couldn't unlock the PDF$from. Check your details or add the bank's pattern under More → Statements → PDF passwords."))
+            is Pdf.Result.Failed -> return done(dao, Outcome("Couldn't read the PDF$from (${r.reason})."))
         }
         val issuer = issuerOf(text)
         val first = Parsers.forIssuer(issuer ?: "").parse(text, received)

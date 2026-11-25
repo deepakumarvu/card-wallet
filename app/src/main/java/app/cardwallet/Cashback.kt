@@ -27,6 +27,8 @@ object Cashback {
         val cappedOut: Rule?,
         /** A base-tied rule that would pay more once more base is earned, and what unlocks it. */
         val unlock: Unlock? = null,
+        /** International spends: the card's forex fee on this amount (already taken out of [cashbackPaise]). */
+        val forexFeePaise: Long = 0,
     )
 
     /** [rule] would pay [valuePaise] once [moreSpendPaise] more of other spends go on this card this cycle. */
@@ -200,8 +202,12 @@ object Cashback {
                 it.ratePercent > appliedRate && cap != null && (earned.byRule[it.id] ?: 0) >= cap &&
                     applies(it, card, amountPaise, merchant, categories)
             }.maxByOrNull { it.ratePercent }
-            Pick(card, toPaise(e.units, card), e.units, rule, rule?.let { capFor(it, earned.base) },
-                rule?.let { earned.byRule[it.id] } ?: 0, cappedOut, unlockFor(card, rules, amountPaise, merchant, categories, earned, e))
+            // Abroad, what matters is reward minus forex fee; some cards give no reward abroad at all.
+            val noRewards = international && !card.rewardsAbroad
+            val units = if (noRewards) 0 else e.units
+            val fee = if (international) percentOf(amountPaise, card.forexMarkupPercent) else 0
+            Pick(card, toPaise(units, card) - fee, units, rule.takeIf { !noRewards }, rule?.let { capFor(it, earned.base) },
+                rule?.let { earned.byRule[it.id] } ?: 0, cappedOut, unlockFor(card, rules, amountPaise, merchant, categories, earned, e), fee)
         }.sortedByDescending { it.cashbackPaise }
     }
 
