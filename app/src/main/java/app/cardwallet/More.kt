@@ -466,7 +466,8 @@ private fun LockedPdfsScreen(dao: WalletDao, onClose: () -> Unit) {
                                 Button(enabled = password.isNotBlank() && !busy, onClick = {
                                     busy = true
                                     scope.launch {
-                                        message = withContext(Dispatchers.IO) { app.cardwallet.statement.LockedPdfs.unlock(context, dao, item, password) }
+                                        message = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.LockedPdfs.unlock(context, dao, item, password) } }
+                                            .getOrElse { e -> dao.log("Unlock failed: $e"); android.util.Log.e("CardWallet", "Unlock failed", e); "Couldn't open it: ${e.message}" }
                                         items = app.cardwallet.statement.LockedPdfs.list(context)
                                         busy = false
                                     }

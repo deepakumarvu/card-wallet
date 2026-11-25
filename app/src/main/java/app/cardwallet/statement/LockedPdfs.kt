@@ -47,6 +47,7 @@ object LockedPdfs {
      */
     suspend fun unlock(context: Context, dao: WalletDao, item: Item, password: String): String {
         val bytes = File(dir(context), "${item.id}.pdf").takeIf { it.exists() }?.readBytes() ?: return "That PDF is gone."
+        Pdf.init(context) // PDFBox needs its resources loaded before the first PDF is opened
         if (Pdf.extract(bytes, listOf(password)) !is Pdf.Result.Text) return "That password didn't open it."
 
         if (item.oneOffPassword) {
