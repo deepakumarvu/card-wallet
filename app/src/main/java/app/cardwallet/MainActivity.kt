@@ -101,7 +101,8 @@ private fun App(dao: WalletDao) {
     // Card the Spends list is narrowed to; null = all cards.
     var spendsCard by rememberSaveable { mutableStateOf<Long?>(null) }
     val haptics = LocalHapticFeedback.current
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    // Surface sets the default text colour (onBackground); without it, plain titles draw black on black.
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) { Box(Modifier.fillMaxSize()) {
         // Screens fade into each other.
         AnimatedContent(tab, transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(160)) }, label = "tab") { t ->
             val modifier = Modifier.statusBarsPadding()
@@ -143,5 +144,5 @@ private fun App(dao: WalletDao) {
                 }
             }
         }
-    }
+    } }
 }

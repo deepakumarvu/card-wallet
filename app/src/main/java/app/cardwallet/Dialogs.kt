@@ -72,7 +72,7 @@ import java.text.NumberFormat
 import java.util.Date
 import java.util.Locale
 
-private val inr = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("en-IN"))
+private val inr = NumberFormat.getCurrencyInstance(Locale.forLanguageTag("en-IN")).apply { minimumFractionDigits = 2 }
 private val inrWhole = (NumberFormat.getCurrencyInstance(Locale.forLanguageTag("en-IN"))).apply { maximumFractionDigits = 0 }
 /** ₹1,500 for whole rupees, ₹98.50 otherwise. */
 fun rupees(paise: Long): String = (if (paise % 100 == 0L) inrWhole else inr).format(paise / 100.0)

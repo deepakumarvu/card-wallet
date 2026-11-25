@@ -356,7 +356,9 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFi
                         cards.forEach { c ->
                             val t = totals.getValue(c)
                             Column(Modifier.clickable { onCardFilter(if (cardFilter == c.id) null else c.id) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Row(verticalAlignment = Alignment.Bottom) {
+                                Row(verticalAlignment = Alignment.Top) {
+                                    CardSwatch(c, 32.dp)
+                                    Spacer(Modifier.size(12.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(c.name, style = MaterialTheme.typography.titleSmall)
                                         Text("since ${shortDate.format(Date(Cashback.cycleStart(c)))}",
