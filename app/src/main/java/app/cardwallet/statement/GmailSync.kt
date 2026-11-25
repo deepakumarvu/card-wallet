@@ -68,8 +68,8 @@ object GmailSync {
     suspend fun sync(context: Context, dao: WalletDao, token: String, profile: PdfProfile, progress: (String) -> Unit = {}): String {
         val prefs = context.getSharedPreferences("gmail", Context.MODE_PRIVATE)
         // Statements that failed to unlock before this version weren't kept: fetch everything once more.
-        if (!prefs.getBoolean("refetch_locked_v1", false)) {
-            prefs.edit().remove("seen_pdfs").remove("synced_up_to").putBoolean("refetch_locked_v1", true).apply()
+        if (!prefs.getBoolean("refetch_v2_card_names", false)) {
+            prefs.edit().remove("seen_pdfs").remove("synced_up_to").putBoolean("refetch_v2_card_names", true).apply()
         }
         val cards = dao.allCards()
         val banks = cards.filter { !it.isDebit }.map { it.bank }.distinct()

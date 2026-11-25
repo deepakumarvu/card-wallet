@@ -68,4 +68,14 @@ class StatementImportTest {
         // A learned pattern opens next month's PDF for the same card.
         assertEquals(true, "DEEP2510" in Passwords.candidates(me.copy(templates = listOf("{NAME4}{DDMM}")), cards))
     }
+
+    @Test
+    fun `statement without readable digits is matched by the card's name in it`() {
+        val ultimo = Card(3, "HDFC PhonePe Ultimo", "HDFC Bank", "4444", 1.0)
+        val all = cards + ultimo
+        assertEquals(regalia, StatementImport.cardFor(statement(null), "HDFC Bank", all, "HDFC BANK REGALIA GOLD CREDIT CARD STATEMENT"))
+        assertEquals(ultimo, StatementImport.cardFor(statement(null), "HDFC Bank", all, "PhonePe HDFC Bank Ultimo Credit Card Statement"))
+        // Swiggy appears as a merchant on a Regalia statement too: two names match, so no guess.
+        assertEquals(null, StatementImport.cardFor(statement(null), "HDFC Bank", all, "Regalia Gold ... SWIGGY ... ULTIMO"))
+    }
 }

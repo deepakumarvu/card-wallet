@@ -28,11 +28,19 @@ object StatementImport {
         "Kotak" to "Kotak", "IDFC FIRST" to "IDFC", "Yes Bank" to "YES BANK", "Amex" to "American Express",
     ).firstOrNull { (_, word) -> text.contains(word, ignoreCase = true) }?.first
 
-    /** The card a statement belongs to: by its last 4 (or old digits), else the only card from that bank. */
-    fun cardFor(parsed: ParsedStatement, issuer: String?, cards: List<Card>): Card? {
+    /**
+     * The card a statement belongs to: by its last 4 (or old digits); else, among that bank's cards,
+     * the one whose own name appears in the statement ("Regalia", "Ultimo"); else the bank's only card.
+     */
+    fun cardFor(parsed: ParsedStatement, issuer: String?, cards: List<Card>, text: String = ""): Card? {
         val credit = cards.filter { !it.isDebit }
-        return credit.find { it.hasDigits(parsed.last4) }
-            ?: issuer?.let { bank -> credit.filter { it.bank.equals(bank, ignoreCase = true) }.singleOrNull() }
+        credit.find { it.hasDigits(parsed.last4) }?.let { return it }
+        val sameBank = credit.filter { issuer != null && it.bank.equals(issuer, ignoreCase = true) }
+        val bankWords = issuer.orEmpty().lowercase().split(' ').toSet() + setOf("bank", "card", "credit", "the")
+        // Words that tell this card apart from the bank's others, e.g. "regalia", "gold" / "phonepe", "ultimo".
+        fun ownWords(c: Card) = c.name.lowercase().split(Regex("[^a-z0-9]+")).filter { it.length >= 4 && it !in bankWords }
+        val byName = sameBank.filter { c -> ownWords(c).any { w -> text.contains(w, ignoreCase = true) } }
+        return byName.singleOrNull() ?: sameBank.singleOrNull()
     }
 
     /**
@@ -78,8 +86,8 @@ object StatementImport {
         }
         val issuer = issuerOf(text)
         val first = Parsers.forIssuer(issuer ?: "").parse(text, received)
-        val card = cardFor(first, issuer, cards)
-            ?: return done(dao, Outcome("Statement for ${issuer ?: "an unknown bank"} card ending ${first.last4 ?: "?"}: no matching card. Add the card or its digits, then import again."))
+        val card = cardFor(first, issuer, cards, text)
+            ?: return done(dao, Outcome("Statement$from for ${issuer ?: "an unknown bank"} card ending ${first.last4 ?: "?"}: no matching card. Add the card or its digits, then import again."))
         val parsed = if (issuer == null) Parsers.forIssuer(card.bank).parse(text, received) else first
 
         parsed.statementDate?.dayOfMonth?.takeIf { it != card.statementDay }?.let { day ->
