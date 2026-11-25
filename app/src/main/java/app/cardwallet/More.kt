@@ -204,7 +204,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                     Text("Reads card spends from bank messages on this phone. Messages never leave the phone.",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Button(onClick = { smsPermission.launch(arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS)) }) {
-                        Text("Read SMS from last month on")
+                        Text("Read SMS: last 6 months")
                     }
                 }
             }

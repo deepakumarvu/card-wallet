@@ -78,4 +78,13 @@ class StatementImportTest {
         // Swiggy appears as a merchant on a Regalia statement too: two names match, so no guess.
         assertEquals(null, StatementImport.cardFor(statement(null), "HDFC Bank", all, "Regalia Gold ... SWIGGY ... ULTIMO"))
     }
+
+    @Test
+    fun `a printed total that doesn't add up is replaced by the worked-out one`() {
+        fun st(total: Long?) = ParsedStatement(LocalDate.of(2026, 11, 14), null, LocalDate.of(2026, 12, 4), total, 6_140_00, 10_000_00, "5004",
+            listOf(line(3, "AMAZON", 1_20_000), line(5, "PAYMENT RECEIVED", 7_200, credit = true)))
+        // Opening ₹10,000 + ₹1,20,000 − ₹7,200 = ₹1,22,800.
+        assertEquals("credit limit read as the total: replaced", 1_22_800_00L, StatementImport.billTotal(st(6_12_000_00)))
+        assertEquals("a total that adds up is kept", 1_22_800_00L, StatementImport.billTotal(st(1_22_800_00)))
+    }
 }

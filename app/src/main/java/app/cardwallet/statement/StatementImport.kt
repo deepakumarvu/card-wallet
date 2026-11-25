@@ -23,6 +23,29 @@ object StatementImport {
 
     private const val DAY = 24 * 60 * 60 * 1000L
 
+    /**
+     * The bill to show: the printed total when it adds up (opening + purchases − credits, ±₹1);
+     * otherwise the worked-out total, since a total that doesn't add up was read from the wrong
+     * place (e.g. the credit limit). Null when neither can be trusted.
+     */
+    fun billTotal(p: ParsedStatement): Long? {
+        if (Parsers.validate(p).ok) return p.totalDuePaise
+        val opening = p.openingPaise ?: return null
+        return (opening + p.debits - p.credits).takeIf { p.lines.isNotEmpty() }
+    }
+
+    /**
+     * For fixing a bank's reader without seeing anyone's numbers: the lines around the bill summary,
+     * with every digit masked, written to the phone's log (tag CardWallet).
+     */
+    private fun logLayout(issuer: String?, text: String) {
+        val lines = text.lines()
+        val keys = Regex("total|minimum|due|limit|balance|opening|previous", RegexOption.IGNORE_CASE)
+        val near = lines.indices.filter { keys.containsMatchIn(lines[it]) }.flatMap { listOf(it, it + 1) }.distinct().filter { it < lines.size }.take(40)
+        val masked = near.joinToString("\n") { i -> "%3d| ".format(i) + lines[i].replace(Regex("\\d"), "#").take(160) }
+        android.util.Log.d("CardWallet", "Layout of ${issuer ?: "unknown"} statement (digits masked):\n$masked")
+    }
+
     /** Which issuer's layout to read the text with, from the bank name printed in it. */
     fun issuerOf(text: String): String? = listOf(
         "HDFC Bank" to "HDFC", "ICICI Bank" to "ICICI", "Axis Bank" to "Axis Bank", "SBI Card" to "SBI Card",
@@ -86,6 +109,7 @@ object StatementImport {
             is Pdf.Result.Failed -> return done(dao, Outcome("Couldn't read the PDF$from (${r.reason})."))
         }
         val issuer = issuerOf(text)
+        logLayout(issuer, text)
         val first = Parsers.forIssuer(issuer ?: "").parse(text, received)
         val card = cardFor(first, issuer, cards, text)
             ?: return done(dao, Outcome("Statement$from for ${issuer ?: "an unknown bank"} card ending ${first.last4 ?: "?"}: no matching card. Add the card or its digits, then import again."))
@@ -98,7 +122,7 @@ object StatementImport {
                 dao.saveLogged(card.copy(statementDay = date.dayOfMonth, lastStatementEpochDay = day))
             }
             dao.saveStatement(StatementRecord(cardId = card.id, statementDate = day, periodStart = parsed.periodStart?.toEpochDay(),
-                dueDate = parsed.dueDate?.toEpochDay(), totalDuePaise = parsed.totalDuePaise, minDuePaise = parsed.minDuePaise))
+                dueDate = parsed.dueDate?.toEpochDay(), totalDuePaise = billTotal(parsed), minDuePaise = parsed.minDuePaise))
         }
         val spends = newSpends(parsed, card, dao.allSpends())
         var added = 0

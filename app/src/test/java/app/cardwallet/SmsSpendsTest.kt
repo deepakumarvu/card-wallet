@@ -126,4 +126,13 @@ class SmsSpendsTest {
         // Too different (more than 2 words) stays separate.
         assertEquals(null, SmsSpends.merge(a, SmsSpends.shapeOf("Your card limit has been raised to Rs 50000 from today")))
     }
+
+    @Test
+    fun `an SMS spend already added from a statement isn't logged again`() {
+        val sms = Spend(cardId = 1, amountPaise = 1568_00, merchant = "BLINKIT", timeMillis = 10 * 86_400_000L, smsKey = "abc")
+        val fromStatement = Spend(9, 1, 1568_00, "BLINKIT COMMERCE", 11 * 86_400_000L, "stmt:x")
+        val otherSms = Spend(8, 1, 1568_00, "BLINKIT", 10 * 86_400_000L + 60_000, "def")
+        assertEquals(true, SmsSpends.alreadyLogged(sms, listOf(fromStatement)))
+        assertEquals("two real same-amount SMS spends both count", false, SmsSpends.alreadyLogged(sms, listOf(otherSms)))
+    }
 }

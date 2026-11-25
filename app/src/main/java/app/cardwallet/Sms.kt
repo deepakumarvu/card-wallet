@@ -124,9 +124,19 @@ object SmsSpends {
         else "${tx.bankName} didn't say which card, and you have $sameBank of its cards"
     }
 
+    /**
+     * True when a statement or Gmail alert already logged this spend: same card, same amount, within
+     * 3 days. SMS-to-SMS repeats are told apart by their own keys, so two real ₹199 charges both count.
+     */
+    fun alreadyLogged(spend: Spend, existing: List<Spend>): Boolean = existing.any {
+        it.cardId == spend.cardId && it.amountPaise == spend.amountPaise &&
+            (it.smsKey?.startsWith("stmt:") == true || it.smsKey?.startsWith("mail:") == true) &&
+            kotlin.math.abs(it.timeMillis - spend.timeMillis) <= 3 * 86_400_000L
+    }
+
     /** Logs [result]; returns true if it added something new. */
     suspend fun save(dao: WalletDao, result: Result, cards: List<Card>): Boolean = when (result) {
-        is Result.CardSpend -> (dao.insertFromSms(result.spend) != -1L).also { new ->
+        is Result.CardSpend -> (!alreadyLogged(result.spend, dao.allSpends()) && dao.insertFromSms(result.spend) != -1L).also { new ->
             if (new) dao.log("SMS logged on ${cards.find { it.id == result.spend.cardId }?.name}: ${rupees(result.spend.amountPaise)} at ${result.spend.merchant}")
         }
         is Result.NeedsYou -> (dao.insertUnread(result.sms) != -1L).also { new ->
@@ -182,12 +192,12 @@ object SmsSpends {
         return same.size
     }
 
-    /** Reads the SMS inbox from the 1st of last month. Returns how many spends/messages were new. */
-    suspend fun importInbox(context: Context): Int {
+    /** Reads the SMS inbox for the last [months] months. Returns how many spends/messages were new. */
+    suspend fun importInbox(context: Context, months: Int = 6): Int {
         val dao = WalletDb.get(context).dao()
         val cards = dao.allCards()
         val since = Calendar.getInstance().apply {
-            add(Calendar.MONTH, -1); set(Calendar.DAY_OF_MONTH, 1)
+            add(Calendar.MONTH, -months); set(Calendar.DAY_OF_MONTH, 1)
             set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0)
         }.timeInMillis
         val ignored = ignoredKeys(dao)
