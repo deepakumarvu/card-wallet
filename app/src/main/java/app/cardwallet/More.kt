@@ -114,7 +114,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     var profile by remember { mutableStateOf(app.cardwallet.statement.PdfProfile.fromJson(prefs.getString("profile", null))) }
     var editProfile by remember { mutableStateOf(false) }
     var showLocked by remember { mutableStateOf(false) }
-    var lockedCount by remember { mutableStateOf(app.cardwallet.statement.LockedPdfs.list(context).size) }
+    var lockedCount by remember { mutableStateOf(app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }) } // (all, Scapia)
 
     // Gmail: Google sign-in gives a read-only token; Sync reads statements and alert emails with it.
     val gmailPrefs = remember { context.getSharedPreferences("gmail", android.content.Context.MODE_PRIVATE) }
@@ -126,7 +126,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
         scope.launch {
             val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, token, profile) { syncStatus = it } } }
             syncing = false
-            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).size
+            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }
             toast(result.getOrElse { "Gmail sync failed: ${it.message}" })
             result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it"); android.util.Log.e("CardWallet", "Gmail sync failed", it) }
         }
@@ -177,7 +177,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                 app.cardwallet.statement.StatementImport.import(context, dao, bytes, profile)
             }
             toast(outcome.message)
-            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).size
+            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }
         }
     }
     val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -234,8 +234,13 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                         Button(onClick = { importPdf.launch(arrayOf("application/pdf")) }) { Text("Import PDF") }
                         OutlinedButton(onClick = { editProfile = true }) { Text("PDF passwords") }
                     }
-                    if (lockedCount > 0) OutlinedButton(onClick = { showLocked = true }) {
-                        Text("Locked PDFs ($lockedCount)", color = MaterialTheme.colorScheme.error)
+                    // Scapia's PDFs have a new password each time; they're optional, so they don't show as a problem.
+                    val (allLocked, scapiaLocked) = lockedCount
+                    if (allLocked > 0) OutlinedButton(onClick = { showLocked = true }) {
+                        Text(
+                            if (allLocked == scapiaLocked) "Locked PDFs ($allLocked, Scapia optional)" else "Locked PDFs (${allLocked - scapiaLocked})",
+                            color = if (allLocked == scapiaLocked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
+                        )
                     }
                 }
             }
@@ -326,7 +331,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     if (showLog) ActivityLog(dao, onClose = { showLog = false })
     if (showLocked) LockedPdfsScreen(dao, onClose = {
         showLocked = false
-        lockedCount = app.cardwallet.statement.LockedPdfs.list(context).size
+        lockedCount = app.cardwallet.statement.LockedPdfs.list(context).let { l -> l.size to l.count { it.oneOffPassword } }
         profile = app.cardwallet.statement.LockedPdfs.loadProfile(context)
     })
     if (editProfile) ProfileForm(profile, onDismiss = { editProfile = false }) {
