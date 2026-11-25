@@ -25,16 +25,18 @@ object SmsSpends {
 
     private val spendWords = Regex("""\b(spent|debited|used|purchase|txn)\b""", RegexOption.IGNORE_CASE)
     private val otpWords = Regex("""\b(otp|one time password|verification code)\b""", RegexOption.IGNORE_CASE)
+    /** A card was used but no money moved: declined, failed or unconfirmed. */
+    private val noSpendWords = Regex("""\b(declined|unable to confirm|failed|reversed|reversal)\b""", RegexOption.IGNORE_CASE)
 
     fun read(body: String, sender: String, timeMillis: Long, cards: List<Card>): Result {
         val key = md5Hex("$sender|$timeMillis|$body")
         val needsYou = Result.NeedsYou(UnreadSms(sender = sender, body = body, timeMillis = timeMillis, smsKey = key))
         val tx = BankParserFactory.parse(body, sender, timeMillis)
             ?: return if (BankParserFactory.isKnownBankSender(sender) && body.contains("card", ignoreCase = true) &&
-                spendWords.containsMatchIn(body) && !otpWords.containsMatchIn(body)
+                spendWords.containsMatchIn(body) && !otpWords.containsMatchIn(body) && !noSpendWords.containsMatchIn(body)
             ) needsYou else Result.Ignore
 
-        val byLast4 = cards.find { tx.accountLast4 != null && it.last4 == tx.accountLast4 }
+        val byLast4 = cards.find { it.hasDigits(tx.accountLast4) }
         val card = when (tx.type) {
             // The parser marks credit card spends as CREDIT.
             TransactionType.CREDIT -> byLast4
@@ -57,11 +59,70 @@ object SmsSpends {
         return Result.CardSpend(spend)
     }
 
+    /**
+     * A waiting message turned into a ready-to-save spend: amount, merchant and card filled in from
+     * the message where it can be read, so the review only needs a check and Save.
+     */
+    fun draft(sms: UnreadSms, cards: List<Card>): Spend {
+        val tx = BankParserFactory.parse(sms.body, sms.sender, sms.timeMillis)
+        val card = cards.firstOrNull { it.hasDigits(tx?.accountLast4) }
+            ?: cards.firstOrNull { it.last4.isNotBlank() && sms.body.contains(it.last4) }
+            ?: cards.filter { tx != null && it.bank.equals(tx.bankName, ignoreCase = true) }.singleOrNull()
+            ?: cards.firstOrNull()
+        return Spend(
+            cardId = card?.id ?: 0,
+            amountPaise = if (tx != null && tx.currency == "INR") tx.amount.movePointRight(2).toLong() else 0,
+            merchant = tx?.merchant.orEmpty(),
+            timeMillis = sms.timeMillis,
+            smsKey = sms.smsKey,
+        )
+    }
+
+    /** Why a waiting message couldn't be logged on its own, in words, without amounts. */
+    fun whyWaiting(body: String, sender: String, cards: List<Card>): String {
+        val tx = BankParserFactory.parse(body, sender, 0) ?: return "Couldn't read this bank's message format"
+        if (tx.currency != "INR") return "Foreign currency (${tx.currency}): enter the ₹ amount"
+        val last4 = tx.accountLast4
+        if (last4 != null) return if (cards.none { it.hasDigits(last4) }) "Card ending $last4 isn't in the app, or its digits aren't set" else "Matched a card; open the app again to log it"
+        val sameBank = cards.count { !it.isDebit && it.bank.equals(tx.bankName, ignoreCase = true) }
+        return if (sameBank == 0) "${tx.bankName} card, but no ${tx.bankName} card is in the app"
+        else "${tx.bankName} didn't say which card, and you have $sameBank of its cards"
+    }
+
     /** Logs [result]; returns true if it added something new. */
-    suspend fun save(dao: WalletDao, result: Result): Boolean = when (result) {
-        is Result.CardSpend -> dao.insertFromSms(result.spend) != -1L
-        is Result.NeedsYou -> dao.insertUnread(result.sms) != -1L
+    suspend fun save(dao: WalletDao, result: Result, cards: List<Card>): Boolean = when (result) {
+        is Result.CardSpend -> (dao.insertFromSms(result.spend) != -1L).also { new ->
+            if (new) dao.log("SMS logged on ${cards.find { it.id == result.spend.cardId }?.name}: ${rupees(result.spend.amountPaise)} at ${result.spend.merchant}")
+        }
+        is Result.NeedsYou -> (dao.insertUnread(result.sms) != -1L).also { new ->
+            if (new) dao.log("SMS from ${result.sms.sender} waiting: ${whyWaiting(result.sms.body, result.sms.sender, cards)}")
+        }
         Result.Ignore -> false
+    }
+
+    /**
+     * Re-reads waiting messages against the current cards, e.g. after you add a card's last 4
+     * digits: what now matches a card is logged, what isn't a spend is dropped, the rest keep
+     * waiting. Returns how many were logged.
+     */
+    suspend fun retryUnread(dao: WalletDao): Int {
+        val cards = dao.allCards()
+        var logged = 0
+        var dropped = 0
+        var waiting = 0
+        for (sms in dao.allUnread()) {
+            val result = read(sms.body, sms.sender, sms.timeMillis, cards)
+            when (result) {
+                is Result.CardSpend -> {
+                    dao.insertFromSms(result.spend); dao.delete(sms); logged++
+                    dao.log("Waiting SMS logged on ${cards.find { it.id == result.spend.cardId }?.name}: ${rupees(result.spend.amountPaise)} at ${result.spend.merchant}")
+                }
+                Result.Ignore -> { dao.deleteLogged(sms, "not a spend (e.g. declined)"); dropped++ }
+                is Result.NeedsYou -> waiting++
+            }
+        }
+        if (logged + dropped > 0) dao.log("Re-checked waiting messages: logged $logged, dropped $dropped, still waiting $waiting")
+        return logged
     }
 
     /** Reads the SMS inbox from the 1st of last month. Returns how many spends/messages were new. */
@@ -81,9 +142,10 @@ object SmsSpends {
             while (c.moveToNext()) {
                 val sender = c.getString(0) ?: continue
                 val body = c.getString(1) ?: continue
-                if (save(dao, read(body, sender, c.getLong(2), cards))) added++
+                if (save(dao, read(body, sender, c.getLong(2), cards), cards)) added++
             }
         }
+        dao.log("Read SMS inbox: $added new")
         return added
     }
 }
@@ -100,7 +162,8 @@ class SmsReceiver : BroadcastReceiver() {
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val dao = WalletDb.get(context).dao()
-                SmsSpends.save(dao, SmsSpends.read(body, sender, time, dao.allCards()))
+                val cards = dao.allCards()
+                SmsSpends.save(dao, SmsSpends.read(body, sender, time, cards), cards)
             } finally {
                 pending.finish()
             }

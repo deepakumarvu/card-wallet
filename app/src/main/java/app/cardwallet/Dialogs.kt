@@ -5,6 +5,18 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.Surface
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.FlowRow
@@ -18,7 +30,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
@@ -26,7 +37,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -35,8 +45,6 @@ import androidx.compose.material3.Card as Box3
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -88,16 +96,18 @@ private val indianBanks by lazy {
 fun SpendDialog(
     cards: List<Card>, spend: Spend, smsBody: String?,
     onSave: (Spend) -> Unit, onDelete: (() -> Unit)?, onDismiss: () -> Unit, deleteLabel: String = "Delete",
+    title: String? = null, onSkip: (() -> Unit)? = null, note: String? = null,
 ) {
     var cardId by remember { mutableStateOf(spend.cardId) }
-    var amount by remember { mutableStateOf(if (spend.amountPaise == 0L) "" else (spend.amountPaise / 100.0).toString()) }
+    var amount by remember { mutableStateOf(if (spend.amountPaise == 0L) "" else spend.amountPaise.toBigDecimal().movePointLeft(2).stripTrailingZeros().toPlainString()) }
     var merchant by remember { mutableStateOf(spend.merchant) }
     val paise = toPaise(amount)
-    AlertDialog(
+    FormDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (spend.id == 0L) "Add spend" else "Edit spend") },
+        title = { Text(title ?: if (spend.id == 0L) "Add spend" else "Edit spend") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary) }
                 smsBody?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 Picker("Card", cards.find { it.id == cardId }?.name ?: "Pick a card", cards.map { it.name }) { cardId = cards[it].id }
                 OutlinedTextField(amount, { amount = it }, label = { Text("Amount (₹)") }, singleLine = true,
@@ -106,10 +116,19 @@ fun SpendDialog(
             }
         },
         confirmButton = {
-            TextButton(enabled = paise != null && paise > 0 && merchant.isNotBlank() && cards.any { it.id == cardId },
+            Button(modifier = Modifier.fillMaxWidth().height(52.dp), enabled = paise != null && paise > 0 && merchant.isNotBlank() && cards.any { it.id == cardId },
                 onClick = { onSave(spend.copy(cardId = cardId, amountPaise = paise!!, merchant = merchant.trim())) }) { Text("Save") }
         },
-        dismissButton = { onDelete?.let { TextButton(onClick = it) { Text(deleteLabel) } } },
+        dismissButton = {
+            Row {
+                onSkip?.let { TextButton(onClick = it) { Text("Skip") } }
+                onDelete?.let {
+                    TextButton(onClick = it) {
+                        Text(deleteLabel, color = if (deleteLabel == "Delete") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
+        },
     )
 }
 
@@ -145,6 +164,7 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
     var name by remember { mutableStateOf(card.name) }
     var bank by remember { mutableStateOf(card.bank) }
     var last4 by remember { mutableStateOf(card.last4) }
+    var oldLast4 by remember { mutableStateOf(card.oldLast4) }
     var base by remember { mutableStateOf(card.baseRatePercent.toString()) }
     var day by remember { mutableStateOf(card.statementDay?.toString() ?: "") }
     var pointValue by remember { mutableStateOf(card.rupeesPerPoint.toString()) }
@@ -155,7 +175,7 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
     var network by remember { mutableStateOf(card.network) }
     var colorIndex by remember { mutableStateOf(card.colorIndex) }
     var confirmDelete by remember { mutableStateOf(false) }
-    AlertDialog(
+    FormDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (card.id == 0L) "Add card" else "Edit card") },
         text = {
@@ -175,6 +195,9 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
                     }
                 }
                 OutlinedTextField(last4, { if (it.length <= 4) last4 = it }, label = { Text("Last 4 digits") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                OutlinedTextField(oldLast4, { oldLast4 = it.filter { c -> c.isDigit() || c == ',' || c == ' ' } }, label = { Text("Old card digits") },
+                    singleLine = true, supportingText = { Text("Last 4 of cards this one replaced, e.g. 5125. SMS from them land here.") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { isDebit = !isDebit }) {
                     Checkbox(isDebit, { isDebit = it })
@@ -205,13 +228,13 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
             }
         },
         confirmButton = {
-            TextButton(
+            Button(modifier = Modifier.fillMaxWidth().height(52.dp), 
                 enabled = name.isNotBlank() && bank.isNotBlank() && last4.length == 4 &&
                     (isDebit || (base.toDoubleOrNull() != null && (pointValue.toDoubleOrNull() ?: 0.0) > 0 && statementDayOk(day))),
                 onClick = {
                     onSave(
-                        if (isDebit) card.copy(name = name.trim(), bank = bank, last4 = last4, isDebit = true, network = network, colorIndex = colorIndex, baseRatePercent = 0.0, rupeesPerPoint = 1.0, statementDay = null)
-                        else card.copy(name = name.trim(), bank = bank, last4 = last4, isDebit = false, baseRatePercent = base.toDouble(),
+                        if (isDebit) card.copy(name = name.trim(), bank = bank, last4 = last4, oldLast4 = oldLast4.trim(), isDebit = true, network = network, colorIndex = colorIndex, baseRatePercent = 0.0, rupeesPerPoint = 1.0, statementDay = null)
+                        else card.copy(name = name.trim(), bank = bank, last4 = last4, oldLast4 = oldLast4.trim(), isDebit = false, baseRatePercent = base.toDouble(),
                             rupeesPerPoint = pointValue.toDouble(), statementDay = day.toIntOrNull(), showPoints = showPoints, internationalOnly = internationalOnly,
                             earnBlockRupees = block.toIntOrNull()?.takeIf { it > 0 },
                             network = network, colorIndex = colorIndex),
@@ -220,7 +243,7 @@ fun CardDialog(card: Card, onSave: (Card) -> Unit, onDelete: (() -> Unit)?, onDi
             ) { Text("Save") }
         },
         dismissButton = {
-            onDelete?.let { TextButton(onClick = { if (confirmDelete) it() else confirmDelete = true }) { Text("Delete") } }
+            onDelete?.let { TextButton(onClick = { if (confirmDelete) it() else confirmDelete = true }) { Text(if (confirmDelete) "Tap again to delete" else "Delete card", color = MaterialTheme.colorScheme.error) } }
         },
     )
 }
@@ -237,7 +260,8 @@ fun RuleDialog(rule: Rule, categories: List<String>, onSave: (Rule) -> Unit, onD
     val capPaise = if (cap.isBlank()) null else toPaise(cap)
     val minPaise = if (min.isBlank()) null else toPaise(min)
     val multiple = baseMultiple.toDoubleOrNull()
-    AlertDialog(
+    var confirmDelete by remember { mutableStateOf(false) }
+    FormDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (rule.id == 0L) "Add rule" else "Edit rule") },
         text = {
@@ -260,7 +284,7 @@ fun RuleDialog(rule: Rule, categories: List<String>, onSave: (Rule) -> Unit, onD
             }
         },
         confirmButton = {
-            TextButton(
+            Button(modifier = Modifier.fillMaxWidth().height(52.dp), 
                 enabled = label.isNotBlank() && rate.toDoubleOrNull() != null && (keywords.isNotBlank() || category != null) &&
                     (cap.isBlank() || capPaise != null) && (min.isBlank() || minPaise != null) && (baseMultiple.isBlank() || multiple != null),
                 onClick = {
@@ -269,8 +293,43 @@ fun RuleDialog(rule: Rule, categories: List<String>, onSave: (Rule) -> Unit, onD
                 },
             ) { Text("Save") }
         },
-        dismissButton = { onDelete?.let { TextButton(onClick = it) { Text("Delete") } } },
+        dismissButton = {
+            onDelete?.let {
+                TextButton(onClick = { if (confirmDelete) it() else confirmDelete = true }) {
+                    Text(if (confirmDelete) "Tap again to delete" else "Delete rule", color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
     )
+}
+
+/**
+ * A form on its own full screen: ✕ at the top, the main action as a big button at the bottom, the form scrolling above the
+ * keyboard. A floating pop-up re-fits itself on every keystroke once the keyboard is up, which
+ * makes long forms jump.
+ */
+@Composable
+fun FormDialog(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit = {},
+) {
+    Dialog(onDismissRequest, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxSize().systemBarsPadding().imePadding().padding(horizontal = 20.dp)) {
+                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onDismissRequest) { Icon(Icons.Default.Close, contentDescription = "Close") }
+                    Box(Modifier.weight(1f)) { ProvideTextStyle(MaterialTheme.typography.titleLarge) { title() } }
+                }
+                Box(Modifier.weight(1f).padding(top = 8.dp)) { text() }
+                // Less common actions (Delete, Skip, Not a spend) sit above the main one.
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) { dismissButton() }
+                Box(Modifier.padding(top = 4.dp, bottom = 12.dp)) { confirmButton() }
+            }
+        }
+    }
 }
 
 private fun statementDayOk(text: String) = text.isBlank() || text.toIntOrNull() in 1..31

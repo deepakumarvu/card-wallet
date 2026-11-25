@@ -249,4 +249,10 @@ class CashbackTest {
             assertEquals("₹$rupees", points * 100, pick.rewardUnits)
         }
     }
+
+    @Test
+    fun `jewellery merchants fall in Jewellery`() {
+        for (merchant in listOf("_TITAN COMPANY LIM.", "TANISHQ JEWELLERY", "SRI LAKSHMI JEWELLERS", "CARATLANE TRADING"))
+            assertEquals(merchant, true, "Jewellery" in Cashback.categoriesOf(merchant, Starter.merchants))
+    }
 }

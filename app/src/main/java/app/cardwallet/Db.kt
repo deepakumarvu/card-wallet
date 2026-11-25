@@ -48,7 +48,13 @@ data class Card(
     @ColumnInfo(defaultValue = "0") val internationalOnly: Boolean = false,
     /** Rewards only on full blocks of this many ₹ (HDFC points: 200); null = every rupee. */
     val earnBlockRupees: Int? = null,
-)
+    /** Last 4 digits of earlier cards replaced by this one (comma-separated), so their bank SMS land here. */
+    @ColumnInfo(defaultValue = "''") val oldLast4: String = "",
+) {
+    /** True when SMS digits [digits] belong to this card, now or before a replacement. */
+    fun hasDigits(digits: String?): Boolean =
+        !digits.isNullOrBlank() && (last4 == digits || oldLast4.split(',').any { it.trim() == digits })
+}
 
 /**
  * A different reward rate on some spends. It matches a spend when the merchant name contains
@@ -105,6 +111,14 @@ data class UnreadSms(
     val smsKey: String,
 )
 
+/** One line in the on-phone activity log, for debugging later. */
+@Entity(tableName = "activity_log")
+data class LogEntry(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timeMillis: Long,
+    val message: String,
+)
+
 @Dao
 interface WalletDao {
     @Query("SELECT * FROM cards ORDER BY sortOrder, name") fun cards(): Flow<List<Card>>
@@ -117,6 +131,14 @@ interface WalletDao {
     @Query("SELECT * FROM rules") suspend fun allRules(): List<Rule>
     @Query("SELECT * FROM spends") suspend fun allSpends(): List<Spend>
     @Query("SELECT * FROM merchant_categories") suspend fun allMerchants(): List<MerchantCategory>
+    @Query("SELECT * FROM unread_sms") suspend fun allUnread(): List<UnreadSms>
+
+    @Insert suspend fun insertLog(entry: LogEntry)
+    @Query("SELECT * FROM activity_log ORDER BY id DESC") fun logs(): Flow<List<LogEntry>>
+    @Query("SELECT * FROM activity_log ORDER BY id") suspend fun allLogs(): List<LogEntry>
+    @Query("DELETE FROM activity_log") suspend fun clearLogs()
+    /** Keeps the newest [keep] entries. */
+    @Query("DELETE FROM activity_log WHERE id <= (SELECT MAX(id) FROM activity_log) - :keep") suspend fun trimLogs(keep: Int)
 
     @Upsert suspend fun save(card: Card): Long
     @Upsert suspend fun saveCards(cards: List<Card>)
@@ -144,11 +166,11 @@ interface WalletDao {
 }
 
 @Database(
-    entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class],
-    version = 6,
+    entities = [Card::class, Rule::class, Spend::class, MerchantCategory::class, UnreadSms::class, LogEntry::class],
+    version = 8,
     autoMigrations = [
         AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 4, to = 5),
-        AutoMigration(from = 5, to = 6),
+        AutoMigration(from = 5, to = 6), AutoMigration(from = 6, to = 7), AutoMigration(from = 7, to = 8),
     ],
 )
 abstract class WalletDb : RoomDatabase() {

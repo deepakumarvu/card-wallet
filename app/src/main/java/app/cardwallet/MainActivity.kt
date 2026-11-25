@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -36,7 +37,13 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(Unit) {
                 if (!prefs.getBoolean("seeded_v2", false)) {
                     Starter.merchants.forEach { dao.save(it) }
+                    dao.log("First run: added ${Starter.merchants.size} merchant keywords")
                     prefs.edit { putBoolean("seeded_v2", true) }
+                }
+                if (!prefs.getBoolean("seeded_jewellery", false)) {
+                    Starter.jewellery.forEach { dao.save(it) }
+                    dao.log("Added ${Starter.jewellery.size} jewellery keywords")
+                    prefs.edit { putBoolean("seeded_jewellery", true) }
                 }
                 // Bump the key when templates gain new settings, so existing cards pick them up once.
                 if (!prefs.getBoolean("looks_filled_v3", false)) {
@@ -63,6 +70,8 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 @Composable
 private fun App(dao: WalletDao) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // Card the Spends list is narrowed to; null = all cards.
+    var spendsCard by rememberSaveable { mutableStateOf<Long?>(null) }
     Scaffold(
         bottomBar = {
             NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
@@ -80,8 +89,8 @@ private fun App(dao: WalletDao) {
         val modifier = Modifier.padding(padding)
         when (Tab.entries[tab]) {
             Tab.Pick -> BestCardScreen(dao, modifier)
-            Tab.Spends -> SpendsScreen(dao, modifier)
-            Tab.Cards -> CardsScreen(dao, modifier)
+            Tab.Spends -> SpendsScreen(dao, modifier, spendsCard) { spendsCard = it }
+            Tab.Cards -> CardsScreen(dao, modifier) { spendsCard = it; tab = Tab.Spends.ordinal }
             Tab.More -> MoreScreen(dao, modifier)
         }
     }

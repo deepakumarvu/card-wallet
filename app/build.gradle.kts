@@ -19,6 +19,16 @@ android {
     buildFeatures {
         compose = true
     }
+
+    buildTypes {
+        // The phone runs the release build: shrunk and optimised, Compose is much smoother than debug.
+        // Signed with the local debug key so it installs over the existing app without losing data.
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
 }
 
 kotlin {

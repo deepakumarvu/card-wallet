@@ -9,7 +9,7 @@ class BackupTest {
     @Test
     fun `backup then restore gives back the same data`() {
         val content = Backup.Content(
-            cards = listOf(Card(1, "Swiggy HDFC", "HDFC Bank", "1111", 1.0, statementDay = 14, sortOrder = 2, showPoints = true, network = "Visa", colorIndex = 3), Card(2, "Axis \"Ace\"", "Axis Bank", "2222", 1.5, rupeesPerPoint = 0.2), Card(3, "Debit", "HDFC Bank", "3333", 0.0, isDebit = true)),
+            cards = listOf(Card(1, "Swiggy HDFC", "HDFC Bank", "1111", 1.0, statementDay = 14, sortOrder = 2, showPoints = true, network = "Visa", colorIndex = 3, oldLast4 = "5125"), Card(2, "Axis \"Ace\"", "Axis Bank", "2222", 1.5, rupeesPerPoint = 0.2), Card(3, "Debit", "HDFC Bank", "3333", 0.0, isDebit = true)),
             rules = listOf(
                 Rule(10, 1, "Swiggy 10%", "swiggy", null, 10.0, 1500_00),
                 Rule(20, 2, "Food, cabs", "swiggy, zomato, ola", "Online", 4.0, null, minAmountPaise = 249_00, capBaseMultiple = 2.0),

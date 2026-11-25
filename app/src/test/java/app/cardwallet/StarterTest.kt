@@ -30,4 +30,12 @@ class StarterTest {
         assertEquals(18, Starter.withLooks(scapia.copy(colorIndex = null)).colorIndex)
         assertEquals(true, Starter.withLooks(scapia).internationalOnly)
     }
+
+    @Test
+    fun `missing starter rules are found by name`() {
+        val airtel = Card(7, "Airtel Axis", "Axis Bank", "2944", 1.0)
+        val kept = Rule(1, 7, "Airtel recharges 25%", "airtel", null, 25.0, null, capBaseMultiple = 2.0)
+        assertEquals(listOf("Electricity & other bills 10%"), Starter.missingRules(airtel, listOf(kept)).map { it.label })
+        assertEquals(emptyList<Starter.RuleTemplate>(), Starter.missingRules(Card(8, "My own card", "HDFC Bank", "1", 1.0), emptyList()))
+    }
 }

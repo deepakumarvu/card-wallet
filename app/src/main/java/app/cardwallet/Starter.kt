@@ -67,6 +67,11 @@ object Starter {
         CardTemplate("HDFC Platinum Debit", "HDFC Bank", 0.0, isDebit = true, color = 17),
     )
 
+    /** Added after the first list; existing installs get these once (see MainActivity). */
+    val jewellery = listOf(
+        "jewel", "tanishq", "titan", "caratlane", "malabar gold", "kalyan jewellers", "joyalukkas", "bluestone", "senco", "grt jewellers", "pc jeweller",
+    ).map { MerchantCategory(it, "Jewellery") }
+
     val merchants = listOf(
         "zomato" to "Dining", "swiggy" to "Dining", "eatsure" to "Dining",
         "zomato" to "Online", "swiggy" to "Online", "amazon" to "Online", "flipkart" to "Online",
@@ -79,21 +84,22 @@ object Starter {
         "tneb" to "Bills", "bses" to "Bills", "airtel" to "Bills", "jio" to "Bills", "act fibernet" to "Bills", "hathway" to "Bills",
         "rent" to "Rent", "nobroker" to "Rent",
         "insurance" to "Insurance", "lic" to "Insurance", "policybazaar" to "Insurance", "acko" to "Insurance",
-    ).map { (keyword, category) -> MerchantCategory(keyword, category) }
+    ).map { (keyword, category) -> MerchantCategory(keyword, category) } + jewellery
+
 
     /**
      * One-time fill for cards added before colours and networks existed: a card named like a
      * template gets that template's colour, network and points display, only where still unset.
      */
     suspend fun fillLooks(dao: WalletDao) {
-        dao.allCards().forEach { card -> withLooks(card).takeIf { it != card }?.let { dao.save(it) } }
+        dao.allCards().forEach { card -> withLooks(card).takeIf { it != card }?.let { dao.saveLogged(it) } }
     }
 
     /** Colours the starter list used to give, now changed: name → (old, new). Applied once, only if still the old one. */
     private val recoloured = mapOf("Scapia" to (6 to 18))
 
     suspend fun applyRecolours(dao: WalletDao) {
-        dao.allCards().forEach { card -> recolour(card).takeIf { it != card }?.let { dao.save(it) } }
+        dao.allCards().forEach { card -> recolour(card).takeIf { it != card }?.let { dao.saveLogged(it) } }
     }
 
     fun recolour(card: Card): Card {
@@ -107,8 +113,20 @@ object Starter {
             internationalOnly = card.internationalOnly || t.internationalOnly, earnBlockRupees = card.earnBlockRupees ?: t.earnBlockRupees)
     }
 
+    /** Rules from the card's starter template that it no longer has (matched by name). */
+    fun missingRules(card: Card, rules: List<Rule>): List<RuleTemplate> {
+        val t = cards.find { it.name == card.name } ?: return emptyList()
+        val have = rules.filter { it.cardId == card.id }.map { it.label }.toSet()
+        return t.rules.filter { it.label !in have }
+    }
+
+    suspend fun restoreRules(dao: WalletDao, card: Card, missing: List<RuleTemplate>) = missing.forEach {
+        dao.saveLogged(Rule(cardId = card.id, label = it.label, keywords = it.keywords, category = it.category, ratePercent = it.rate,
+            monthlyCapPaise = it.cap?.times(100), minAmountPaise = it.minRupees?.times(100), capBaseMultiple = it.capBaseMultiple))
+    }
+
     suspend fun addCard(dao: WalletDao, template: CardTemplate, last4: String, statementDay: Int?) {
-        val cardId = dao.save(
+        val cardId = dao.saveLogged(
             Card(name = template.name, bank = template.bank, last4 = last4, baseRatePercent = template.baseRate,
                 statementDay = statementDay.takeIf { !template.isDebit }, rupeesPerPoint = template.rupeesPerPoint, isDebit = template.isDebit,
                 sortOrder = dao.nextSortOrder(), showPoints = template.showPoints,
@@ -116,7 +134,7 @@ object Starter {
                 earnBlockRupees = template.earnBlockRupees),
         )
         template.rules.forEach {
-            dao.save(Rule(cardId = cardId, label = it.label, keywords = it.keywords, category = it.category, ratePercent = it.rate,
+            dao.saveLogged(Rule(cardId = cardId, label = it.label, keywords = it.keywords, category = it.category, ratePercent = it.rate,
                 monthlyCapPaise = it.cap?.times(100), minAmountPaise = it.minRupees?.times(100), capBaseMultiple = it.capBaseMultiple))
         }
     }

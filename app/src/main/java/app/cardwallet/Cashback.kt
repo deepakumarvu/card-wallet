@@ -40,7 +40,15 @@ object Cashback {
 
     /** True when a word in [merchant] starts with [keyword]: "ola" matches "OLACABS", not "COCA COLA". */
     fun hasKeyword(merchant: String, keyword: String): Boolean =
-        keyword.isNotBlank() && Regex("""\b""" + Regex.escape(keyword.trim()), RegexOption.IGNORE_CASE).containsMatchIn(merchant)
+        keyword.isNotBlank() && keywordPattern(keyword.trim()).containsMatchIn(merchant)
+
+    // Patterns are built once per keyword: matching runs for every spend × keyword × card on each screen.
+    private val patterns = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
+    // Word start = after any non-letter/digit, so "_TITAN" and "RSP*SWIGGY" match too.
+    private fun keywordPattern(keyword: String): Regex = patterns.getOrPut(keyword) {
+        Regex("""(?<![\p{L}\p{N}])""" + Regex.escape(keyword), RegexOption.IGNORE_CASE)
+    }
 
     fun categoriesOf(merchant: String, table: List<MerchantCategory>): Set<String> =
         table.filter { hasKeyword(merchant, it.keyword) }.map { it.category }.toSet()

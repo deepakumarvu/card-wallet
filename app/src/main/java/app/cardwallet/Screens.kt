@@ -1,6 +1,11 @@
 package app.cardwallet
 
 import androidx.compose.foundation.clickable
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -112,6 +117,10 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
     var international by remember { mutableStateOf(false) }
     var searchOpen by remember { mutableStateOf(false) }
     val paise = toPaise(amount) ?: 0
+    // Ranking replays every card's cycle; redo it only when an input changes, not on every redraw.
+    val picks = remember(paise, merchant, cards, rules, spends, merchants, international) {
+        Cashback.rank(paise, merchant, cards, rules, spends, merchants, international = international)
+    }
 
     LazyColumn(modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
@@ -123,8 +132,9 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
                     OutlinedTextField(merchant, { merchant = it; searchOpen = true }, placeholder = { Text("Search merchant") }, singleLine = true,
                         shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) searchOpen = true })
-                    val suggestions = Cashback.merchantSuggestions(merchant, merchants, rules, spends)
-                        .filterNot { it.name.equals(merchant.trim(), ignoreCase = true) }
+                    val suggestions = remember(merchant, merchants, rules, spends) {
+                        Cashback.merchantSuggestions(merchant, merchants, rules, spends).filterNot { it.name.equals(merchant.trim(), ignoreCase = true) }
+                    }
                     DropdownMenu(
                         expanded = searchOpen && suggestions.isNotEmpty(),
                         onDismissRequest = { searchOpen = false },
@@ -165,7 +175,6 @@ fun BestCardScreen(dao: WalletDao, modifier: Modifier) {
             item { EmptyState("No cards yet", "Add your cards on the Cards tab, and this shows which one pays most back.") }
             return@LazyColumn
         }
-        val picks = Cashback.rank(paise, merchant, cards, rules, spends, merchants, international = international)
         if (picks.isEmpty()) {
             item { EmptyState("Only debit cards", "Debit cards are tracked but never suggested. Add a credit card to see picks.") }
             return@LazyColumn
@@ -273,7 +282,7 @@ private fun EmptyState(title: String, body: String) {
 // ---------- Spends ----------
 
 @Composable
-fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
+fun SpendsScreen(dao: WalletDao, modifier: Modifier, cardFilter: Long?, onCardFilter: (Long?) -> Unit) {
     val cards by dao.cards().collectAsState(emptyList())
     val rules by dao.rules().collectAsState(emptyList())
     val spends by dao.spends().collectAsState(emptyList())
@@ -281,12 +290,25 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
     val unread by dao.unread().collectAsState(emptyList())
     val scope = rememberCoroutineScope()
     var editing by remember { mutableStateOf<Spend?>(null) }
-    var fromSms by remember { mutableStateOf<UnreadSms?>(null) }
+    // Going through waiting bank messages one after another; skipped ones wait for next time.
+    var reviewing by remember { mutableStateOf(false) }
+    val doneKeys = remember { mutableStateListOf<String>() }
+    val toReview = unread.filter { it.smsKey !in doneKeys }
+    // New or edited card digits may now match waiting messages: log those on their own.
+    LaunchedEffect(cards) { if (cards.isNotEmpty()) withContext(Dispatchers.Default) { SmsSpends.retryUnread(dao) } }
     val cardById = cards.associateBy { it.id }
 
     // Each card counts its own cycle.
-    val cycleSpends = cards.flatMap { c -> spends.filter { it.cardId == c.id && it.timeMillis >= Cashback.cycleStart(c.statementDay) } }
-    val totals = cards.associateWith { Cashback.replayCycle(it, rules, spends, merchants).second }
+    val cycleSpends = remember(cards, spends) {
+        cards.flatMap { c -> spends.filter { it.cardId == c.id && it.timeMillis >= Cashback.cycleStart(c.statementDay) } }
+    }
+    val totals = remember(cards, rules, spends, merchants) { cards.associateWith { Cashback.replayCycle(it, rules, spends, merchants).second } }
+    // Reading each waiting SMS runs ~190 bank parsers; do it only when the messages or cards change.
+    val waitingReasons by produceState(emptyList<Map.Entry<String, Int>>(), unread, cards) {
+        value = withContext(Dispatchers.Default) {
+            unread.groupingBy { SmsSpends.whyWaiting(it.body, it.sender, cards) }.eachCount().entries.sortedByDescending { it.value }
+        }
+    }
     val spentAll = totals.values.sumOf { it.spentPaise }
     val backAll = totals.values.sumOf { it.cashbackPaise }
 
@@ -301,13 +323,17 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
             }
             if (unread.isNotEmpty()) item {
                 Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(20.dp),
-                    modifier = Modifier.fillMaxWidth().clickable { fromSms = unread.first() }) {
+                    modifier = Modifier.fillMaxWidth().clickable { doneKeys.clear(); reviewing = true }) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.Email, null)
                         Spacer(Modifier.size(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text("${unread.size} bank message${if (unread.size > 1) "s" else ""} to check", style = MaterialTheme.typography.titleMedium)
                             Text("Couldn't log these on their own. Tap to go through them.", style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.height(6.dp))
+                            waitingReasons.forEach { (why, n) ->
+                                    Text("$n · $why", style = MaterialTheme.typography.bodySmall)
+                                }
                         }
                     }
                 }
@@ -319,7 +345,7 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
                         val max = totals.values.maxOf { it.spentPaise }.coerceAtLeast(1)
                         cards.forEach { c ->
                             val t = totals.getValue(c)
-                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Column(Modifier.clickable { onCardFilter(if (cardFilter == c.id) null else c.id) }, verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Row(verticalAlignment = Alignment.Bottom) {
                                     Column(Modifier.weight(1f)) {
                                         Text(c.name, style = MaterialTheme.typography.titleSmall)
@@ -339,8 +365,26 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
             }
             if (cycleSpends.isNotEmpty()) item { CategoryPanel(cycleSpends, merchants) }
             item { SectionLabel("Recent spends") }
-            if (spends.isEmpty()) item { EmptyState("Nothing logged yet", "Add a spend, or turn on SMS reading under More.") }
-            spends.groupBy { dayLabel(it.timeMillis) }.forEach { (day, daySpends) ->
+            // Narrow the list to one card: tap a chip here, or a card under "By card".
+            if (cards.isNotEmpty()) item {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item { FilterChip(selected = cardFilter == null, onClick = { onCardFilter(null) }, label = { Text("All") }, shape = RoundedCornerShape(50)) }
+                    items(cards, key = { it.id }) { c ->
+                        FilterChip(selected = cardFilter == c.id, onClick = { onCardFilter(if (cardFilter == c.id) null else c.id) },
+                            label = { Text(c.name) }, leadingIcon = { CardSwatch(c, 20.dp) }, shape = RoundedCornerShape(50))
+                    }
+                }
+            }
+            val shown = spends.filter { cardFilter == null || it.cardId == cardFilter }
+            cardById[cardFilter]?.let { c ->
+                item { Text("${shown.size} spends on ${c.name} · ${rupees(shown.sumOf { it.amountPaise })} in all",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            if (shown.isEmpty()) item {
+                if (cardFilter == null) EmptyState("Nothing logged yet", "Add a spend, or turn on SMS reading under More.")
+                else EmptyState("No spends on this card yet", "Spends logged on it, from SMS or by hand, show here.")
+            }
+            shown.groupBy { dayLabel(it.timeMillis) }.forEach { (day, daySpends) ->
                 item(key = "day-$day") {
                     Text(day, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -375,18 +419,23 @@ fun SpendsScreen(dao: WalletDao, modifier: Modifier) {
 
     editing?.let { s ->
         SpendDialog(cards, s, smsBody = null,
-            onSave = { scope.launch { dao.save(it) }; editing = null },
-            onDelete = if (s.id != 0L) ({ scope.launch { dao.delete(s) }; editing = null }) else null,
+            onSave = { scope.launch { dao.saveLogged(it) }; editing = null },
+            onDelete = if (s.id != 0L) ({ scope.launch { dao.deleteLogged(s) }; editing = null }) else null,
             onDismiss = { editing = null })
     }
-    fromSms?.let { sms ->
-        val guess = cards.firstOrNull { sms.body.contains(it.last4) } ?: cards.firstOrNull()
-        SpendDialog(cards, Spend(cardId = guess?.id ?: 0, amountPaise = 0, merchant = "", timeMillis = sms.timeMillis, smsKey = sms.smsKey),
+    val sms = if (reviewing) toReview.firstOrNull() else null
+    if (reviewing && sms == null) reviewing = false
+    if (sms != null) key(sms.smsKey) {
+        val position = unread.size - toReview.size + 1
+        SpendDialog(cards, SmsSpends.draft(sms, cards),
             smsBody = sms.body,
-            onSave = { scope.launch { dao.save(it); dao.delete(sms) }; fromSms = null },
-            onDelete = { scope.launch { dao.delete(sms) }; fromSms = null },
+            note = SmsSpends.whyWaiting(sms.body, sms.sender, cards),
+            title = "Message $position of ${unread.size}",
+            onSave = { doneKeys += sms.smsKey; scope.launch { dao.saveLogged(it); dao.deleteLogged(sms, "saved as a spend") } },
+            onDelete = { doneKeys += sms.smsKey; scope.launch { dao.deleteLogged(sms, "marked not a spend") } },
             deleteLabel = "Not a spend",
-            onDismiss = { fromSms = null })
+            onSkip = { doneKeys += sms.smsKey },
+            onDismiss = { reviewing = false })
     }
 }
 
@@ -405,9 +454,11 @@ private fun StatTile(label: String, value: String, valueColor: Color, modifier: 
 @Composable
 private fun CategoryPanel(cycleSpends: List<Spend>, merchants: List<MerchantCategory>) {
     val allCategories = merchants.map { it.category }.distinct()
-    val byCategory = cycleSpends.groupBy { Cashback.mainCategory(it.merchant, merchants) }
-        .mapValues { (_, list) -> list.sumOf { it.amountPaise } }
-        .entries.sortedByDescending { it.value }
+    val byCategory = remember(cycleSpends, merchants) {
+        cycleSpends.groupBy { Cashback.mainCategory(it.merchant, merchants) }
+            .mapValues { (_, list) -> list.sumOf { it.amountPaise } }
+            .entries.sortedByDescending { it.value }
+    }
     val total = byCategory.sumOf { it.value }
     Panel {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -434,7 +485,7 @@ private fun CategoryPanel(cycleSpends: List<Spend>, merchants: List<MerchantCate
 // ---------- Cards ----------
 
 @Composable
-fun CardsScreen(dao: WalletDao, modifier: Modifier) {
+fun CardsScreen(dao: WalletDao, modifier: Modifier, onShowSpends: (Long) -> Unit) {
     val cards by dao.cards().collectAsState(emptyList())
     val rules by dao.rules().collectAsState(emptyList())
     val spends by dao.spends().collectAsState(emptyList())
@@ -458,7 +509,7 @@ fun CardsScreen(dao: WalletDao, modifier: Modifier) {
         if (cards.isNotEmpty()) item(key = "stack") {
             CardStack(cards, openId,
                 onToggle = { openId = if (openId == it.id) null else it.id },
-                onReorder = { reordered -> scope.launch { dao.saveCards(reordered.mapIndexed { i, c -> c.copy(sortOrder = i) }) } },
+                onReorder = { reordered -> scope.launch { dao.saveCards(reordered.mapIndexed { i, c -> c.copy(sortOrder = i) }); dao.log("Cards reordered: ${reordered.joinToString { it.name }}") } },
             ) { card ->
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -467,7 +518,9 @@ fun CardsScreen(dao: WalletDao, modifier: Modifier) {
                     }
                     CardDetails(card, rules, spends, merchants,
                         onEditRule = { editRule = it },
-                        onAddRule = { editRule = Rule(cardId = card.id, label = "", keywords = "", category = null, ratePercent = 5.0, monthlyCapPaise = null) })
+                        onAddRule = { editRule = Rule(cardId = card.id, label = "", keywords = "", category = null, ratePercent = 5.0, monthlyCapPaise = null) },
+                        onRestoreRules = { missing -> scope.launch { Starter.restoreRules(dao, card, missing) } },
+                        onShowSpends = { onShowSpends(card.id) })
                 }
             }
             Spacer(Modifier.height(8.dp))
@@ -483,13 +536,13 @@ fun CardsScreen(dao: WalletDao, modifier: Modifier) {
     if (starter) StarterDialog(onPick = { t, last4, day -> scope.launch { Starter.addCard(dao, t, last4, day) }; starter = false }, onDismiss = { starter = false })
     editCard?.let { c ->
         CardDialog(c,
-            onSave = { scope.launch { dao.save(if (it.id == 0L) it.copy(sortOrder = dao.nextSortOrder()) else it) }; editCard = null },
-            onDelete = if (c.id != 0L) ({ scope.launch { dao.delete(c) }; editCard = null; openId = null }) else null,
+            onSave = { scope.launch { dao.saveLogged(if (it.id == 0L) it.copy(sortOrder = dao.nextSortOrder()) else it) }; editCard = null },
+            onDelete = if (c.id != 0L) ({ scope.launch { dao.deleteLogged(c) }; editCard = null; openId = null }) else null,
             onDismiss = { editCard = null })
     }
     editRule?.let { r ->
-        RuleDialog(r, merchants.map { it.category }.distinct().sorted(), onSave = { scope.launch { dao.save(it) }; editRule = null },
-            onDelete = if (r.id != 0L) ({ scope.launch { dao.delete(r) }; editRule = null }) else null,
+        RuleDialog(r, merchants.map { it.category }.distinct().sorted(), onSave = { scope.launch { dao.saveLogged(it) }; editRule = null },
+            onDelete = if (r.id != 0L) ({ scope.launch { dao.deleteLogged(r) }; editRule = null }) else null,
             onDismiss = { editRule = null })
     }
 }
@@ -581,14 +634,24 @@ private fun CardStack(
 @Composable
 private fun CardDetails(
     card: Card, rules: List<Rule>, spends: List<Spend>, merchants: List<MerchantCategory>,
-    onEditRule: (Rule) -> Unit, onAddRule: () -> Unit,
+    onEditRule: (Rule) -> Unit, onAddRule: () -> Unit, onRestoreRules: (List<Starter.RuleTemplate>) -> Unit,
+    onShowSpends: () -> Unit,
 ) {
+    val (earned, total) = remember(card, rules, spends, merchants) { Cashback.replayCycle(card, rules, spends, merchants) }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 12.dp)) {
+        Column(Modifier.weight(1f)) {
+            Text("This cycle: ${rupees(total.spentPaise)} spent" + if (card.isDebit) "" else " · ${backText(total.cashbackPaise, total.rewardUnits, card)} back",
+                style = MaterialTheme.typography.titleSmall)
+            Text("since ${shortDate.format(Date(Cashback.cycleStart(card.statementDay)))}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        TextButton(onClick = onShowSpends) { Text("See spends") }
+    }
     if (card.isDebit) {
         Text("Debit card: spends are tracked, but it's never suggested on Best card.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
     }
-    val earned = Cashback.replayCycle(card, rules, spends, merchants).first
     val resets = shortDate.format(Date(Cashback.nextCycleStart(card.statementDay)))
     Panel {
         Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -616,8 +679,14 @@ private fun CardDetails(
             }
             if (card.statementDay == null) Text("Set the statement day (Edit card) so caps reset on the right day.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(onClick = onAddRule, contentPadding = PaddingValues(0.dp)) {
-                Icon(Icons.Default.Add, null); Spacer(Modifier.size(4.dp)); Text("Add rule")
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                TextButton(onClick = onAddRule, contentPadding = PaddingValues(0.dp)) {
+                    Icon(Icons.Default.Add, null); Spacer(Modifier.size(4.dp)); Text("Add rule")
+                }
+                val missing = Starter.missingRules(card, rules)
+                if (missing.isNotEmpty()) TextButton(onClick = { onRestoreRules(missing) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Restore missing rules (${missing.size})")
+                }
             }
         }
     }
