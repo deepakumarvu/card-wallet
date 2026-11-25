@@ -2,7 +2,7 @@
 
 An Android app that tracks your credit cards and what you spend on them, and tells you which card to use for a payment, e.g. "₹1,000 at Zomato → Swiggy HDFC Ornge, ₹50 back".
 
-**Everything stays on the phone.** The app has no internet permission at all, Google backup and phone-to-phone transfer are turned off, and backups are a zip file you save yourself.
+**Your data stays on the phone.** The only network use is reading your own Gmail (read-only) for statements and card alerts, when you turn it on. There's no account, server or analytics; Google backup and phone-to-phone transfer are turned off, and backups are a zip file you save yourself.
 
 ## What it does
 
@@ -92,6 +92,17 @@ adb install -r --user 0 app/build/outputs/apk/release/app-release.apk
 More → Statements → **Import PDF** reads a card statement on the phone: it finds the card by its last 4 digits, sets the card's statement day, and adds purchases that SMS missed (bill payments, refunds, fees and cashback lines are skipped; a purchase already logged within 3 days is not added twice). Locked PDFs are opened by trying the usual Indian bank password patterns built from your name, date of birth, PAN and mobile (More → Statements → PDF passwords), kept only in the app.
 
 The statement reader (`app/.../statement/`: `Parser.kt`, `Pdf.kt`, `Passwords.kt`, `TxnKind.kt`) comes from [CardKeep](https://github.com/santdas36/CardKeep) (GPL-3.0). It knows HDFC, ICICI, Axis, SBI Card, Kotak, IDFC FIRST, Yes Bank and Amex layouts, with a generic reader for others.
+
+## Gmail
+
+More → Gmail → **Connect Gmail** signs in with Google for a read-only token (`gmail.readonly`), then reads mail over IMAP on the phone:
+
+- statement PDFs from HDFC, ICICI and Axis statement addresses, and mail with a statement subject from your banks' domains (Federal Bank/Scapia and Indian Bank included), each run through the statement import above;
+- HDFC card alert emails, logged like SMS (skipped when the SMS already logged the same spend).
+
+The first sync looks back 6 months; later ones pick up from the last. The sign-in uses the Google Cloud project in `docs/google-oauth-android-client.json` (Android client: package `app.cardwallet` + the signing key's SHA-1; no secret). While that project's consent screen is in Testing, Google asks to sign in again about every 7 days.
+
+The mail client and alert parser (`MailClient.kt`, `AlertParser.kt`, `AlertRules.kt`) also come from CardKeep.
 
 ## Licence
 
