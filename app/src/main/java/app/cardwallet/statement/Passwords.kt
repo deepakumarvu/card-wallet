@@ -59,6 +59,37 @@ object Passwords {
         "{PAN}", "{pan}", "{name4}{MOBILE4}", "{NAME4}{MOBILE4}", "{MOBILE}",
     )
 
+    /**
+     * Works out how a password that opened a statement is built from your details: the token
+     * patterns (1 to 3 tokens) that produce exactly [password]. Empty when none fits.
+     * Added for Card Wallet: learn a bank's pattern from one password you type.
+     */
+    fun inferTemplates(password: String, profile: PdfProfile, last4s: Collection<String>): List<String> {
+        val tokens = (tokenValues(profile) + last4s.map { "{LAST4}" to it }).filter { it.second.isNotEmpty() }
+        val found = LinkedHashSet<String>()
+        fun walk(rest: String, template: String, depth: Int) {
+            if (rest.isEmpty()) { found += template; return }
+            if (depth == 3) return
+            for ((t, v) in tokens) if (rest.startsWith(v)) walk(rest.removePrefix(v), template + t, depth + 1)
+        }
+        walk(password, "", 0)
+        return found.sortedBy { it.length }
+    }
+
+    private fun tokenValues(profile: PdfProfile): List<Pair<String, String>> {
+        val first = profile.name.trim().split(Regex("\\s+")).firstOrNull().orEmpty().filter(Char::isLetter)
+        val n4 = first.take(4)
+        val dob = profile.dob
+        return listOf(
+            "{NAME4}" to n4.uppercase(), "{name4}" to n4.lowercase(), "{Name4}" to n4.lowercase().replaceFirstChar { it.uppercase() },
+            "{DDMM}" to (dob?.format(DateTimeFormatter.ofPattern("ddMM")) ?: ""),
+            "{DDMMYY}" to (dob?.format(DateTimeFormatter.ofPattern("ddMMyy")) ?: ""),
+            "{DDMMYYYY}" to (dob?.format(DateTimeFormatter.ofPattern("ddMMyyyy")) ?: ""),
+            "{PAN}" to profile.pan.trim().uppercase(), "{pan}" to profile.pan.trim().lowercase(),
+            "{MOBILE4}" to profile.mobile.filter(Char::isDigit).takeLast(4), "{MOBILE}" to profile.mobile.filter(Char::isDigit).takeLast(10),
+        )
+    }
+
     fun candidates(profile: PdfProfile, last4s: Collection<String>): List<String> {
         val first = profile.name.trim().split(Regex("\\s+")).firstOrNull().orEmpty().filter(Char::isLetter)
         val n4 = first.take(4)

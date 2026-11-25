@@ -113,6 +113,8 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     val prefs = remember { context.getSharedPreferences("statements", android.content.Context.MODE_PRIVATE) }
     var profile by remember { mutableStateOf(app.cardwallet.statement.PdfProfile.fromJson(prefs.getString("profile", null))) }
     var editProfile by remember { mutableStateOf(false) }
+    var showLocked by remember { mutableStateOf(false) }
+    var lockedCount by remember { mutableStateOf(app.cardwallet.statement.LockedPdfs.list(context).size) }
 
     // Gmail: Google sign-in gives a read-only token; Sync reads statements and alert emails with it.
     val gmailPrefs = remember { context.getSharedPreferences("gmail", android.content.Context.MODE_PRIVATE) }
@@ -124,6 +126,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
         scope.launch {
             val result = runCatching { withContext(Dispatchers.IO) { app.cardwallet.statement.GmailSync.sync(context, dao, token, profile) { syncStatus = it } } }
             syncing = false
+            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).size
             toast(result.getOrElse { "Gmail sync failed: ${it.message}" })
             result.exceptionOrNull()?.let { dao.log("Gmail sync failed: $it"); android.util.Log.e("CardWallet", "Gmail sync failed", it) }
         }
@@ -174,6 +177,7 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                 app.cardwallet.statement.StatementImport.import(context, dao, bytes, profile)
             }
             toast(outcome.message)
+            lockedCount = app.cardwallet.statement.LockedPdfs.list(context).size
         }
     }
     val saveLog = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri ->
@@ -229,6 +233,9 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Button(onClick = { importPdf.launch(arrayOf("application/pdf")) }) { Text("Import PDF") }
                         OutlinedButton(onClick = { editProfile = true }) { Text("PDF passwords") }
+                    }
+                    if (lockedCount > 0) OutlinedButton(onClick = { showLocked = true }) {
+                        Text("Locked PDFs ($lockedCount)", color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
@@ -317,6 +324,11 @@ fun MoreScreen(dao: WalletDao, modifier: Modifier) {
     }
 
     if (showLog) ActivityLog(dao, onClose = { showLog = false })
+    if (showLocked) LockedPdfsScreen(dao, onClose = {
+        showLocked = false
+        lockedCount = app.cardwallet.statement.LockedPdfs.list(context).size
+        profile = app.cardwallet.statement.LockedPdfs.loadProfile(context)
+    })
     if (editProfile) ProfileForm(profile, onDismiss = { editProfile = false }) {
         profile = it
         prefs.edit().putString("profile", it.toJson()).apply()
@@ -388,7 +400,6 @@ private fun ProfileForm(profile: app.cardwallet.statement.PdfProfile, onDismiss:
     var dob by remember { mutableStateOf(profile.dob?.format(dobFormat).orEmpty()) }
     var pan by remember { mutableStateOf(profile.pan) }
     var mobile by remember { mutableStateOf(profile.mobile) }
-    var patterns by remember { mutableStateOf(profile.templates.joinToString(", ")) }
     val dobDate = runCatching { java.time.LocalDate.parse(dob.trim(), dobFormat) }.getOrNull()
     FormDialog(
         onDismissRequest = onDismiss,
@@ -403,15 +414,62 @@ private fun ProfileForm(profile: app.cardwallet.statement.PdfProfile, onDismiss:
                     isError = dob.isNotBlank() && dobDate == null)
                 OutlinedTextField(pan, { pan = it.uppercase() }, label = { Text("PAN (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(mobile, { mobile = it.filter(Char::isDigit) }, label = { Text("Mobile (optional)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(patterns, { patterns = it }, label = { Text("Your own patterns (optional)") }, modifier = Modifier.fillMaxWidth(),
-                    supportingText = { Text("For banks whose format isn't guessed, comma-separated. Use " +
-                        app.cardwallet.statement.Passwords.TOKENS.joinToString(", ") { "${it.first} = ${it.second}" }) })
+                if (profile.templates.isNotEmpty()) {
+                    Text("Learned from passwords you typed:", style = MaterialTheme.typography.labelMedium)
+                    profile.templates.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+                }
             }
         },
         confirmButton = {
             Button(enabled = dob.isBlank() || dobDate != null, modifier = Modifier.fillMaxWidth(),
-                onClick = { onSave(profile.copy(name = name.trim(), dob = dobDate, pan = pan.trim(), mobile = mobile,
-                    templates = patterns.split(',').map { it.trim() }.filter { it.isNotEmpty() })) }) { Text("Save") }
+                onClick = { onSave(profile.copy(name = name.trim(), dob = dobDate, pan = pan.trim(), mobile = mobile)) }) { Text("Save") }
         },
+    )
+}
+
+/** Statements no known password opened. Type a password once; the app learns the pattern and opens the rest. */
+@Composable
+private fun LockedPdfsScreen(dao: WalletDao, onClose: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var items by remember { mutableStateOf(app.cardwallet.statement.LockedPdfs.list(context)) }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf("") }
+    FormDialog(
+        onDismissRequest = onClose,
+        title = { Text("Locked PDFs") },
+        text = {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                item {
+                    Text("Type the password of any one. The app works out how it's built from your name, date of birth, PAN, mobile or " +
+                        "card digits, remembers that pattern, and tries it on the rest. Passwords stay on this phone.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 8.dp))
+                }
+                if (items.isEmpty()) item { Text("Nothing locked.") }
+                items(items, key = { it.id }) { item ->
+                    var password by remember { mutableStateOf("") }
+                    Panel {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(item.label.ifBlank { "Imported PDF" }, style = MaterialTheme.typography.titleSmall)
+                            item.received?.let { Text("Received $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(password, { password = it }, placeholder = { Text("Password") }, singleLine = true, modifier = Modifier.weight(1f))
+                                Button(enabled = password.isNotBlank() && !busy, onClick = {
+                                    busy = true
+                                    scope.launch {
+                                        message = withContext(Dispatchers.IO) { app.cardwallet.statement.LockedPdfs.unlock(context, dao, item, password) }
+                                        items = app.cardwallet.statement.LockedPdfs.list(context)
+                                        busy = false
+                                    }
+                                }) { Text(if (busy) "…" else "Unlock") }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onClose, modifier = Modifier.fillMaxWidth()) { Text("Done") } },
     )
 }

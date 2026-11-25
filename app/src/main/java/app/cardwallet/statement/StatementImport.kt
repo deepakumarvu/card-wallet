@@ -18,7 +18,7 @@ import kotlin.math.abs
 object StatementImport {
 
     /** What happened to one PDF, in words for the screen and the activity log. */
-    data class Outcome(val message: String, val added: Int = 0)
+    data class Outcome(val message: String, val added: Int = 0, val locked: Boolean = false)
 
     private const val DAY = 24 * 60 * 60 * 1000L
 
@@ -65,7 +65,10 @@ object StatementImport {
         val candidates = (worked.toList() + Passwords.candidates(profile, digits)).distinct()
         val text = when (val r = Pdf.extract(bytes, candidates)) {
             is Pdf.Result.Text -> r.text.also { if (r.password.isNotEmpty()) prefs.edit().putStringSet("passwords_that_worked", worked + r.password).apply() }
-            Pdf.Result.Locked -> return done(dao, Outcome("Couldn't unlock the PDF$from. Check your details or add the bank's pattern under More → Statements → PDF passwords."))
+            Pdf.Result.Locked -> {
+                LockedPdfs.keep(context, bytes, label, received)
+                return done(dao, Outcome("Couldn't unlock the PDF$from. It's kept under More → Statements → Locked PDFs: type its password there once.", locked = true))
+            }
             is Pdf.Result.Failed -> return done(dao, Outcome("Couldn't read the PDF$from (${r.reason})."))
         }
         val issuer = issuerOf(text)

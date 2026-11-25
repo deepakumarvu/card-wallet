@@ -51,4 +51,21 @@ class StatementImportTest {
         assertEquals("Axis Bank", StatementImport.issuerOf("Axis Bank Privilege American Express"))
         assertEquals(null, StatementImport.issuerOf("Some other statement"))
     }
+
+    @Test
+    fun `password pattern is worked out from the details`() {
+        val me = PdfProfile(name = "Deepakumar V U", dob = LocalDate.of(1997, 10, 25), pan = "ABCDE1234F")
+        val cards = listOf("0027", "7126")
+        // Each case: password → the pattern it's built from.
+        val cases = mapOf(
+            "DEEP2510" to "{NAME4}{DDMM}",
+            "deep25101997" to "{name4}{DDMMYYYY}",
+            "251019977126" to "{DDMMYYYY}{LAST4}",
+            "ABCDE1234F" to "{PAN}",
+        )
+        for ((password, pattern) in cases) assertEquals(password, pattern, Passwords.inferTemplates(password, me, cards).first())
+        assertEquals("a password not built from your details", emptyList<String>(), Passwords.inferTemplates("Xy9!kk", me, cards))
+        // A learned pattern opens next month's PDF for the same card.
+        assertEquals(true, "DEEP2510" in Passwords.candidates(me.copy(templates = listOf("{NAME4}{DDMM}")), cards))
+    }
 }
